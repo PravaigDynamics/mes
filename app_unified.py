@@ -1183,7 +1183,6 @@ def render_data_entry_tab():
                     complete_process(battery_pack_id, process_name)
                     st.success(f"Process '{process_name}' completed successfully! End time recorded.")
                     st.balloons()
-                    time.sleep(2)
                     st.rerun()
                 except Exception as e:
                     st.error(f"Failed to complete process: {str(e)}")
@@ -1515,11 +1514,13 @@ def render_dashboard_tab():
                     row_data["Status"] = "Not Started"
 
                 tracker_data.append(row_data)
-                wb.close()
 
             except Exception as e:
-                logger.error(f"Error reading {file}: {e}")
+                logger.error(f"Error reading sheet {sheet_name}: {e}")
                 continue
+
+        # Close workbook after processing all sheets
+        wb.close()
 
         # Create DataFrame
         if tracker_data:
