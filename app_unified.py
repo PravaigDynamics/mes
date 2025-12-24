@@ -1,0 +1,1801 @@
+"""
+Battery Pack Manufacturing Execution System
+Professional Enterprise Application
+"""
+
+import sys
+import io
+import time
+import logging
+from pathlib import Path
+from datetime import datetime
+from typing import List, Dict, Optional
+import streamlit as st
+import pandas as pd
+import plotly.graph_objects as go
+import openpyxl
+import qrcode
+from PIL import Image
+import base64
+
+# Setup basic logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Process definitions - Updated with actual QC checks from template
+PROCESS_DEFINITIONS = {
+    "Cell sorting": {
+        "qc_checks": [
+            "Acceptable range Voltage: 3.58 to 3.6 V, IR: 11.5 to 12.5 mΩ",
+            "Jig setup on the flat surface",
+            "Visual & spacing inspection"
+        ]
+    },
+    "Module assembly": {
+        "qc_checks": [
+            "Aluminum base plate fixing in Base plate fixture & stitch nut",
+            "Adhesive dispensing on cells placed in the jig & lio of cell assembly jig on baseplate fixture after curing",
+            "Dispensing the cell assembly jig & fixture",
+            "Fixing of Downwell (PC sheets) in the cell assembly",
+            "Thermistor & voltage tagging on Cell assembly(Routing & Placement)",
+            "Busbar fitment on CPT (adhesive dispensing & voltage tap,thermistor sub assembly)"
+        ]
+    },
+    "Pre Encapsulation": {
+        "qc_checks": [
+            "The 90 % of encapsulation on module by tightening the module independently using the holding fixture",
+            "Bus bar top assembly placement and Soldering of voltage taps on the cells",
+            "Stripping crimping & connector insertion for voltage tap and thermistor"
+        ]
+    },
+    "Wire Bonding": {
+        "qc_checks": [
+            "As per the cell assembly procedure"
+        ]
+    },
+    "Post Encapsulation": {
+        "qc_checks": [
+            "The remaining 20 % of encapsulation on wire bonded module",
+            "Dimensions of the part"
+        ]
+    },
+    "EOL Testing": {
+        "qc_checks": [
+            "Check for Abnormal temp & voltages and cell imbalance, Isolation resistance (EOL: 300 amp charge and discharge)"
+        ]
+    },
+    "Pack assembly": {
+        "qc_checks": [
+            "Pack Assembly(Mock fitment of module 1 & 2 in base plate enclosure)",
+            "Fitment of module 1 & module 2between MSM sandwich bodies on the base plate with sealant and screw with M6 allen head",
+            "Assembly of base plates (left & flame arrester sizes (M3) with sealant /foam and M6)",
+            "Assembly of busbar series with UX Allen head",
+            "Cell box top cover assembly- PCB joining ;PRV assembly; busbar/array & cleanliness",
+            "Final QC on the pack level with CTQs",
+            "Sealing- PCB, Overall Pack Body & Terminals",
+            "Overall aesthetics/cleanliness of the pack",
+            "Pre-casing torque check and paint marking (M4 socket head)",
+            "Leak test (Pressure test) (chaser/Fixer)",
+            "Labelling of the battery pack",
+            "Torque checks & torque marking",
+            "Sealing - PCB, Overall Pack Body & Terminals)",
+            "Overall aesthetics/cleanliness of the pack",
+            "Pre-casing torque check and paint marking (M4 socket head)",
+            "Leak test (Pressure test) (chaser/Fixer)",
+            "Labelling of the battery pack",
+            "Torque checks & torque marking",
+            "Hard leakage to body - Shouldn't present",
+            "Voltage and thermaltor readings with respect to PREVAID BMS (PCB communications - voltage + temperature)",
+            "Hard leakage to body: Shouldn't present",
+            "Isolation resistance: Min in Mohm"
+        ]
+    },
+    "Ready for Dispatch": {
+        "qc_checks": [
+            "Overall pack visual inspection: No defects/no dents/no stains, HV terminals covered, PCB covered, PRV placed, labels verified"
+        ]
+    }
+}
+
+# Row mapping for Excel sheet
+# Maps process name to starting row and column configuration
+PROCESS_ROW_MAPPING = {
+    "Cell sorting": {"start_row": 8, "type": "standard"},  # Processes 1-7
+    "Module assembly": {"start_row": 11, "type": "standard"},
+    "Pre Encapsulation": {"start_row": 14, "type": "standard"},
+    "Wire Bonding": {"start_row": 17, "type": "standard"},
+    "Post Encapsulation": {"start_row": 20, "type": "standard"},
+    "EOL Testing": {"start_row": 38, "type": "standard"},
+    "Pack assembly": {"start_row": 40, "type": "pack"},  # Process 8
+    "Ready for Dispatch": {"start_row": 62, "type": "dispatch"}  # Processes 9-10
+}
+
+# Helper Functions
+def safe_write_cell(ws, row: int, column: int, value):
+    """Safely write to a cell, handling merged cells."""
+    try:
+        cell = ws.cell(row=row, column=column)
+        # Check if this is a MergedCell
+        if isinstance(cell, openpyxl.cell.cell.MergedCell):
+            # Find the merged range this cell belongs to
+            for merged_range in ws.merged_cells.ranges:
+                if cell.coordinate in merged_range:
+                    # Get the top-left cell of the merged range
+                    min_row = merged_range.min_row
+                    min_col = merged_range.min_col
+                    top_left_cell = ws.cell(row=min_row, column=min_col)
+                    top_left_cell.value = value
+                    return
+        else:
+            # Normal cell, write directly
+            cell.value = value
+    except Exception as e:
+        logger.error(f"Error writing to cell ({row}, {column}): {e}")
+        raise
+
+def check_battery_exists(battery_pack_id: str) -> dict:
+    """Check if battery pack ID already exists in system."""
+    exists_info = {
+        'qr_exists': False,
+        'data_exists': False,
+        'qr_path': None,
+        'sheet_exists': False
+    }
+
+    # Check if QR code file exists
+    qr_dir = Path("qr_codes")
+    qr_dir.mkdir(exist_ok=True)
+    qr_path = qr_dir / f"{battery_pack_id}.png"
+
+    if qr_path.exists():
+        exists_info['qr_exists'] = True
+        exists_info['qr_path'] = qr_path
+
+    # Check if sheet exists in sample.xlsx
+    master_file = Path("sample.xlsx")
+    if master_file.exists():
+        try:
+            wb = openpyxl.load_workbook(master_file, read_only=True)
+            if battery_pack_id in wb.sheetnames:
+                exists_info['data_exists'] = True
+                exists_info['sheet_exists'] = True
+            wb.close()
+        except:
+            pass
+
+    return exists_info
+
+def check_process_data_exists(battery_pack_id: str, process_name: str) -> dict:
+    """Check if data already exists for a specific process in a battery pack.
+
+    Returns dict with:
+    - 'exists': bool - whether any data exists
+    - 'started': bool - whether process has been started (has start date)
+    - 'completed': bool - whether process has been completed (has end date)
+    - 'process_type': str - type of process (standard, pack, dispatch)
+    """
+    result = {
+        'exists': False,
+        'started': False,
+        'completed': False,
+        'process_type': None
+    }
+
+    master_file = Path("sample.xlsx")
+    if not master_file.exists():
+        return result
+
+    try:
+        wb = openpyxl.load_workbook(master_file, read_only=True)
+        if battery_pack_id not in wb.sheetnames:
+            wb.close()
+            return result
+
+        ws = wb[battery_pack_id]
+
+        # Get the row range for this process
+        if process_name not in PROCESS_ROW_MAPPING:
+            wb.close()
+            return result
+
+        process_info = PROCESS_ROW_MAPPING[process_name]
+        start_row = process_info["start_row"]
+        process_type = process_info["type"]
+        result['process_type'] = process_type
+
+        # Check if any data exists in the result columns for this process
+        # Check column L (12) which always has results
+        has_data = False
+        has_start_date = False
+        has_end_date = False
+
+        for row_idx in range(start_row, start_row + 10):  # Check up to 10 rows
+            try:
+                # Check for result data in column L (12)
+                result_cell = ws.cell(row=row_idx, column=12)
+                if not isinstance(result_cell, openpyxl.cell.cell.MergedCell):
+                    if result_cell.value and str(result_cell.value).strip():
+                        has_data = True
+
+                # For standard processes, check start date (column N=14) and end date (column O=15)
+                if process_type == "standard":
+                    start_date_cell = ws.cell(row=row_idx, column=14)
+                    if not isinstance(start_date_cell, openpyxl.cell.cell.MergedCell):
+                        if start_date_cell.value and str(start_date_cell.value).strip():
+                            has_start_date = True
+
+                    end_date_cell = ws.cell(row=row_idx, column=15)
+                    if not isinstance(end_date_cell, openpyxl.cell.cell.MergedCell):
+                        if end_date_cell.value and str(end_date_cell.value).strip():
+                            has_end_date = True
+            except:
+                continue
+
+        wb.close()
+
+        result['exists'] = has_data
+        result['started'] = has_start_date
+        result['completed'] = has_end_date
+
+        return result
+    except Exception as e:
+        logger.error(f"Error checking process data: {e}")
+        return result
+
+def complete_process(battery_pack_id: str, process_name: str) -> Path:
+    """Complete a process by updating the end date."""
+    try:
+        master_file = Path("sample.xlsx")
+        if not master_file.exists():
+            raise FileNotFoundError("sample.xlsx not found.")
+
+        wb = openpyxl.load_workbook(master_file)
+
+        if battery_pack_id not in wb.sheetnames:
+            raise ValueError(f"Sheet for {battery_pack_id} not found")
+
+        ws = wb[battery_pack_id]
+
+        # Get process mapping
+        if process_name not in PROCESS_ROW_MAPPING:
+            raise ValueError(f"Unknown process: {process_name}")
+
+        process_info = PROCESS_ROW_MAPPING[process_name]
+        start_row = process_info["start_row"]
+        process_type = process_info["type"]
+
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # Update end dates for standard processes
+        if process_type == "standard":
+            # Update end date in column O (15) for all rows that have data
+            for row_idx in range(start_row, start_row + 30):
+                try:
+                    # Check if this row has result data
+                    result_cell = ws.cell(row=row_idx, column=12)
+                    if not isinstance(result_cell, openpyxl.cell.cell.MergedCell):
+                        if result_cell.value and str(result_cell.value).strip():
+                            # Update end date
+                            safe_write_cell(ws, row_idx, 15, timestamp)
+                except:
+                    continue
+
+        wb.save(master_file)
+        logger.info(f"Completed process {process_name} for {battery_pack_id}")
+        return master_file
+
+    except Exception as e:
+        logger.error(f"Error completing process: {e}", exc_info=True)
+        raise
+
+def generate_qr_code(battery_pack_id: str, size: int = 300, include_label: bool = True) -> bytes:
+    """Generate QR code for battery pack ID and save to qr_codes folder."""
+    try:
+        # Create QR code
+        qr = qrcode.QRCode(
+            version=1,
+            error_correction=qrcode.constants.ERROR_CORRECT_H,
+            box_size=10,
+            border=4,
+        )
+
+        # Generate URL or direct ID
+        data = f"http://localhost:8501/entry/{battery_pack_id}"
+        qr.add_data(data)
+        qr.make(fit=True)
+
+        # Create image
+        img = qr.make_image(fill_color="black", back_color="white")
+
+        # Resize to requested size
+        img = img.resize((size, size), Image.Resampling.LANCZOS)
+
+        # Add label if requested
+        if include_label:
+            from PIL import ImageDraw, ImageFont
+            # Create new image with space for label
+            label_height = 40
+            new_img = Image.new('RGB', (size, size + label_height), 'white')
+            new_img.paste(img, (0, 0))
+
+            # Draw label
+            draw = ImageDraw.Draw(new_img)
+            text = battery_pack_id
+            # Use default font
+            try:
+                font = ImageFont.truetype("arial.ttf", 20)
+            except:
+                font = ImageFont.load_default()
+
+            # Get text bbox and center it
+            bbox = draw.textbbox((0, 0), text, font=font)
+            text_width = bbox[2] - bbox[0]
+            text_x = (size - text_width) // 2
+            text_y = size + 10
+
+            draw.text((text_x, text_y), text, fill='black', font=font)
+            img = new_img
+
+        # Save to qr_codes folder
+        qr_dir = Path("qr_codes")
+        qr_dir.mkdir(exist_ok=True)
+        qr_path = qr_dir / f"{battery_pack_id}.png"
+        img.save(qr_path)
+        logger.info(f"QR code saved to {qr_path}")
+
+        # Convert to bytes for display
+        img_buffer = io.BytesIO()
+        img.save(img_buffer, format='PNG')
+        img_buffer.seek(0)
+        return img_buffer.getvalue()
+
+    except Exception as e:
+        logger.error(f"QR generation error: {e}")
+        raise
+
+def get_battery_report_path(battery_pack_id: str) -> Optional[Path]:
+    """Get the Excel report path for a battery pack."""
+    excel_dir = Path("excel_reports")
+    if not excel_dir.exists():
+        excel_dir.mkdir(parents=True, exist_ok=True)
+
+    # Look for existing file
+    pattern = f"excel_reports{battery_pack_id}*.xlsx"
+    existing_files = list(Path(".").glob(pattern))
+
+    if existing_files:
+        return existing_files[0]
+
+    return excel_dir / f"{battery_pack_id}.xlsx"
+
+def add_detailed_entry(battery_pack_id: str, process_name: str, technician_name: str,
+                      qc_name: str, remarks: str, checks: List[Dict]) -> Path:
+    """Add detailed entry to sample.xlsx - each battery gets its own sheet."""
+    try:
+        # Always use sample.xlsx as the master file
+        master_file = Path("sample.xlsx")
+
+        if not master_file.exists():
+            raise FileNotFoundError("sample.xlsx not found. Please ensure the template exists.")
+
+        # Load the master workbook
+        wb = openpyxl.load_workbook(master_file)
+
+        # Check if sheet for this battery pack exists
+        sheet_name = battery_pack_id
+
+        if sheet_name in wb.sheetnames:
+            # Use existing sheet
+            ws = wb[sheet_name]
+        else:
+            # Create new sheet for this battery pack by copying the template
+            template_sheet = wb.worksheets[0]
+            # Use openpyxl's copy_worksheet to copy everything including merged cells
+            ws = wb.copy_worksheet(template_sheet)
+            ws.title = sheet_name
+
+            # Write Battery Pack ID to cell J6 (column 10, row 6)
+            safe_write_cell(ws, 6, 10, battery_pack_id)
+
+        # Get process mapping
+        if process_name not in PROCESS_ROW_MAPPING:
+            logger.error(f"Process '{process_name}' not found in mapping")
+            raise ValueError(f"Unknown process: {process_name}")
+
+        process_info = PROCESS_ROW_MAPPING[process_name]
+        start_row = process_info["start_row"]
+        process_type = process_info["type"]
+
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # Write data based on process type
+        if process_type == "standard":
+            # Processes 1-7: Cell sorting through EOL Testing
+            # Columns: L(12), M(13), N(14), O(15), P(16), Q(17), R(18)
+            # L: Module X QC Result
+            # M: Module Y QC Result
+            # N: Start date
+            # O: End date
+            # P: Technician Name/sign
+            # Q: QC Name/Sign
+            # R: Remarks
+
+            for idx, check in enumerate(checks):
+                row = start_row + idx
+                safe_write_cell(ws, row, 12, check['module_x'])  # L: Module X QC Result
+                safe_write_cell(ws, row, 13, check['module_y'])  # M: Module Y QC Result
+                safe_write_cell(ws, row, 14, timestamp)  # N: Start date
+                # O: End date - Left blank initially, filled when "Complete Process" is clicked
+                safe_write_cell(ws, row, 16, technician_name)  # P: Technician Name/sign
+                safe_write_cell(ws, row, 17, qc_name)  # Q: QC Name/Sign
+                safe_write_cell(ws, row, 18, remarks)  # R: Remarks
+
+        elif process_type == "pack":
+            # Process 8: Pack Assembly
+            # Columns: L(12), N(14), P(16), R(18)
+            # L: Pack QC Result
+            # N: Date
+            # P: Name
+            # R: Remarks
+
+            for idx, check in enumerate(checks):
+                row = start_row + idx
+                # For Pack Assembly, we use Module X result as Pack QC Result
+                pack_result = check['module_x'] if check['module_x'] != "N/A" else check['module_y']
+                safe_write_cell(ws, row, 12, pack_result)  # L: Pack QC Result
+                safe_write_cell(ws, row, 14, timestamp)  # N: Date
+                safe_write_cell(ws, row, 16, technician_name)  # P: Name
+                safe_write_cell(ws, row, 18, remarks)  # R: Remarks
+
+        elif process_type == "dispatch":
+            # Process 9-10: Ready for Dispatch
+            # This handles both "Overall pack visual inspection" and "Packaging Instructions"
+
+            if len(checks) == 1:
+                # Process 9: Overall pack visual inspection (single row at 62)
+                # Columns: L(12), N(14), P(16), R(18)
+                row = 62
+                result = checks[0]['module_x'] if checks[0]['module_x'] != "N/A" else checks[0]['module_y']
+                safe_write_cell(ws, row, 12, result)  # L: Result
+                safe_write_cell(ws, row, 14, timestamp)  # N: Date
+                safe_write_cell(ws, row, 16, technician_name)  # P: Name
+                safe_write_cell(ws, row, 18, remarks)  # R: Remarks
+            else:
+                # Process 10: Packaging Instructions & PDIR Acceptance
+                # Special: Inspector name in F63, Date in J63
+                safe_write_cell(ws, 63, 6, qc_name)  # F63: Inspector Name
+                safe_write_cell(ws, 63, 10, timestamp)  # J63: Date
+
+                # Data rows starting at 64
+                # Columns: L(12), P(16)
+                # L: Result
+                # P: Comments
+                for idx, check in enumerate(checks):
+                    row = 64 + idx
+                    result = check['module_x'] if check['module_x'] != "N/A" else check['module_y']
+                    safe_write_cell(ws, row, 12, result)  # L: Result
+                    safe_write_cell(ws, row, 16, remarks)  # P: Comments
+
+        # Save back to sample.xlsx
+        wb.save(master_file)
+        logger.info(f"Saved data to {master_file} - Sheet: {sheet_name} - Process: {process_name}")
+        return master_file
+
+    except Exception as e:
+        logger.error(f"Excel entry error: {e}", exc_info=True)
+        raise
+
+# Page configuration
+st.set_page_config(
+    page_title="Battery Pack MES",
+    page_icon="🏭",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
+
+# Professional CSS - Modern Enterprise Design
+st.markdown("""
+<style>
+    /* Root Variables - Professional Color Palette */
+    :root {
+        --primary-color: #1565C0;
+        --primary-dark: #0D47A1;
+        --primary-light: #1976D2;
+        --success-color: #2E7D32;
+        --success-light: #66BB6A;
+        --error-color: #C62828;
+        --error-light: #EF5350;
+        --warning-color: #F57C00;
+        --info-color: #0288D1;
+        --gray-50: #FAFAFA;
+        --gray-100: #F5F5F5;
+        --gray-200: #EEEEEE;
+        --gray-300: #E0E0E0;
+        --gray-400: #BDBDBD;
+        --gray-500: #9E9E9E;
+        --gray-700: #616161;
+        --gray-800: #424242;
+        --gray-900: #212121;
+    }
+
+    /* Global Styles */
+    .main > div {
+        padding: 1.5rem 2rem;
+        max-width: 1400px;
+        margin: 0 auto;
+    }
+
+    /* Typography */
+    h1 {
+        color: var(--gray-900);
+        font-size: 2rem;
+        font-weight: 600;
+        margin-bottom: 0.5rem;
+        letter-spacing: -0.02em;
+    }
+
+    h2 {
+        color: var(--gray-800);
+        font-size: 1.5rem;
+        font-weight: 600;
+        margin-top: 2rem;
+        margin-bottom: 1rem;
+    }
+
+    h3 {
+        color: var(--gray-800);
+        font-size: 1.25rem;
+        font-weight: 500;
+        margin-top: 1.5rem;
+        margin-bottom: 0.75rem;
+    }
+
+    /* Buttons - Material Design Style */
+    .stButton > button {
+        width: 100%;
+        padding: 0.75rem 1.5rem;
+        font-size: 0.95rem;
+        font-weight: 500;
+        border-radius: 4px;
+        border: none;
+        transition: all 0.2s ease;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+    }
+
+    .stButton > button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    }
+
+    /* Input Fields */
+    .stTextInput > div > div > input,
+    .stSelectbox > div > div > select,
+    .stTextArea > div > div > textarea {
+        font-size: 1rem;
+        padding: 0.75rem;
+        border: 1px solid var(--gray-300);
+        border-radius: 4px;
+        transition: border-color 0.2s ease;
+    }
+
+    .stTextInput > div > div > input:focus,
+    .stSelectbox > div > div > select:focus,
+    .stTextArea > div > div > textarea:focus {
+        border-color: var(--primary-color);
+        box-shadow: 0 0 0 2px rgba(21, 101, 192, 0.1);
+    }
+
+    /* Labels */
+    .stTextInput > label,
+    .stSelectbox > label,
+    .stTextArea > label {
+        font-size: 0.875rem;
+        font-weight: 500;
+        color: var(--gray-700);
+        margin-bottom: 0.5rem;
+    }
+
+    /* Tabs - Professional Navigation */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 0;
+        background-color: var(--gray-100);
+        border-bottom: 2px solid var(--gray-300);
+        padding: 0;
+    }
+
+    .stTabs [data-baseweb="tab"] {
+        height: 56px;
+        padding: 0 24px;
+        background-color: transparent;
+        border-radius: 0;
+        font-size: 0.875rem;
+        font-weight: 500;
+        color: var(--gray-700);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        border-bottom: 3px solid transparent;
+    }
+
+    .stTabs [aria-selected="true"] {
+        background-color: white;
+        color: var(--primary-color);
+        border-bottom: 3px solid var(--primary-color);
+    }
+
+    /* Cards */
+    .card {
+        background: white;
+        border: 1px solid var(--gray-200);
+        border-radius: 8px;
+        padding: 1.5rem;
+        margin: 1rem 0;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+    }
+
+    .card-header {
+        font-size: 1.125rem;
+        font-weight: 600;
+        color: var(--gray-800);
+        margin-bottom: 1rem;
+        padding-bottom: 0.75rem;
+        border-bottom: 1px solid var(--gray-200);
+    }
+
+    /* Status Badges */
+    .badge {
+        display: inline-block;
+        padding: 0.35rem 0.75rem;
+        border-radius: 12px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+
+    .badge-success {
+        background-color: #E8F5E9;
+        color: var(--success-color);
+    }
+
+    .badge-info {
+        background-color: #E3F2FD;
+        color: var(--info-color);
+    }
+
+    .badge-warning {
+        background-color: #FFF3E0;
+        color: var(--warning-color);
+    }
+
+    .badge-error {
+        background-color: #FFEBEE;
+        color: var(--error-color);
+    }
+
+    /* Alert Boxes */
+    .alert {
+        padding: 1rem 1.25rem;
+        border-radius: 4px;
+        margin: 1rem 0;
+        border-left: 4px solid;
+    }
+
+    .alert-success {
+        background-color: #E8F5E9;
+        border-left-color: var(--success-color);
+        color: var(--success-color);
+    }
+
+    .alert-info {
+        background-color: #E3F2FD;
+        border-left-color: var(--info-color);
+        color: #01579B;
+    }
+
+    .alert-warning {
+        background-color: #FFF3E0;
+        border-left-color: var(--warning-color);
+        color: #E65100;
+    }
+
+    .alert-error {
+        background-color: #FFEBEE;
+        border-left-color: var(--error-color);
+        color: var(--error-color);
+    }
+
+    /* Scanner Method Cards */
+    .method-card {
+        background: white;
+        border: 2px solid var(--gray-200);
+        border-radius: 8px;
+        padding: 1.5rem;
+        text-align: center;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        height: 100%;
+    }
+
+    .method-card:hover {
+        border-color: var(--primary-color);
+        box-shadow: 0 4px 12px rgba(21, 101, 192, 0.15);
+    }
+
+    .method-card.primary {
+        border-color: var(--primary-color);
+        background: linear-gradient(135deg, #E3F2FD 0%, #BBDEFB 100%);
+    }
+
+    .method-card.secondary {
+        border-color: var(--success-color);
+        background: linear-gradient(135deg, #E8F5E9 0%, #C8E6C9 100%);
+    }
+
+    .method-title {
+        font-size: 1.125rem;
+        font-weight: 600;
+        color: var(--gray-900);
+        margin-bottom: 0.5rem;
+    }
+
+    .method-description {
+        font-size: 0.875rem;
+        color: var(--gray-600);
+        line-height: 1.5;
+    }
+
+    /* Metrics Cards */
+    .metric-card {
+        background: white;
+        border: 1px solid var(--gray-200);
+        border-radius: 8px;
+        padding: 1.5rem;
+        text-align: center;
+    }
+
+    .metric-value {
+        font-size: 2rem;
+        font-weight: 700;
+        color: var(--primary-color);
+        line-height: 1;
+        margin: 0.5rem 0;
+    }
+
+    .metric-label {
+        font-size: 0.875rem;
+        font-weight: 500;
+        color: var(--gray-600);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+
+    /* File Upload */
+    .uploadedFile {
+        font-size: 0.875rem;
+    }
+
+    [data-testid="stFileUploader"] {
+        border: 2px dashed var(--gray-300);
+        border-radius: 8px;
+        padding: 2rem;
+        background: var(--gray-50);
+        transition: border-color 0.2s ease;
+    }
+
+    [data-testid="stFileUploader"]:hover {
+        border-color: var(--primary-color);
+        background: white;
+    }
+
+    /* QR Scanner Container */
+    .scanner-container {
+        background: white;
+        border: 1px solid var(--gray-200);
+        border-radius: 8px;
+        padding: 1.5rem;
+        margin: 1rem 0;
+    }
+
+    /* Dividers */
+    hr {
+        border: none;
+        border-top: 1px solid var(--gray-200);
+        margin: 2rem 0;
+    }
+
+    /* Mobile Responsive */
+    @media (max-width: 768px) {
+        .main > div {
+            padding: 1rem;
+        }
+
+        h1 {
+            font-size: 1.5rem;
+        }
+
+        .method-card {
+            padding: 1rem;
+        }
+
+        .metric-value {
+            font-size: 1.5rem;
+        }
+    }
+
+    /* Hide Streamlit Branding */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+</style>
+""", unsafe_allow_html=True)
+
+
+# ============================================================================
+# QR CODE DETECTION
+# ============================================================================
+
+def decode_qr_from_image(image):
+    """Decode QR code from uploaded image using OpenCV."""
+    try:
+        import cv2
+        import numpy as np
+
+        # Convert PIL Image to numpy array
+        img_array = np.array(image)
+
+        # Convert RGB to BGR (OpenCV uses BGR)
+        if len(img_array.shape) == 3 and img_array.shape[2] == 3:
+            img_array = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+        elif len(img_array.shape) == 3 and img_array.shape[2] == 4:
+            img_array = cv2.cvtColor(img_array, cv2.COLOR_RGBA2BGR)
+
+        # Initialize QR code detector
+        detector = cv2.QRCodeDetector()
+
+        # Detect and decode QR code
+        data, bbox, straight_qrcode = detector.detectAndDecode(img_array)
+
+        if data:
+            logger.info(f"QR code detected: {data}")
+            return data
+        else:
+            logger.warning("No QR code found in image")
+            return None
+
+    except Exception as e:
+        logger.error(f"QR decode error: {e}", exc_info=True)
+        return None
+
+
+def extract_battery_id_from_url(url):
+    """Extract battery pack ID from QR code URL."""
+    try:
+        if '/entry/' in url:
+            battery_id = url.split('/entry/')[-1]
+            battery_id = battery_id.split('?')[0]
+            battery_id = battery_id.split('#')[0]
+            return battery_id.strip()
+        return url
+    except:
+        return url
+
+
+def check_camera_support():
+    """Check if camera scanning is supported in current environment."""
+    # Camera works on localhost and HTTPS
+    # For HTTP deployments, recommend photo upload
+    try:
+        import streamlit as st
+        # This is a placeholder - actual detection would require JavaScript
+        # For now, we'll show both options and let user choose
+        return True
+    except:
+        return False
+
+
+# ============================================================================
+# DATA ENTRY TAB
+# ============================================================================
+
+def render_data_entry_tab():
+    """Render Data Entry tab with professional QR scanning interface."""
+
+    st.markdown("## Production Data Entry")
+    st.caption("Scan battery pack QR code or enter ID manually")
+
+    # Initialize session state
+    if 'scanned_battery_id' not in st.session_state:
+        st.session_state['scanned_battery_id'] = ''
+
+    # QR Scanning Section
+    st.markdown("---")
+    st.markdown("### Battery Pack Identification")
+
+    # Only show method selection if no scanner is currently open
+    if not st.session_state.get('photo_upload_open', False) and not st.session_state.get('camera_scanner_open', False):
+        # Two scanning methods side by side
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.markdown("""
+            <div class="method-card secondary">
+                <div class="method-title">Photo Upload</div>
+                <div class="method-description">
+                    Recommended for all devices<br/>
+                    Works on HTTP and HTTPS
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            if st.button("Upload QR Code Photo", key="open_upload", use_container_width=True, type="primary"):
+                st.session_state['photo_upload_open'] = True
+                st.session_state['camera_scanner_open'] = False
+                st.rerun()
+
+        with col2:
+            st.markdown("""
+            <div class="method-card primary">
+                <div class="method-title">Live Camera</div>
+                <div class="method-description">
+                    Direct scanning<br/>
+                    Requires HTTPS or localhost
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            if st.button("Open Camera Scanner", key="open_camera", use_container_width=True):
+                st.session_state['camera_scanner_open'] = True
+                st.session_state['photo_upload_open'] = False
+                st.rerun()
+
+    # Photo Upload Scanner
+    if st.session_state.get('photo_upload_open', False):
+        st.markdown("---")
+        st.markdown("### Upload QR Code Image")
+
+        st.markdown("""
+        <div class="alert alert-info">
+            <strong>Instructions:</strong> Upload a clear photo of the QR code.
+            The battery ID will be detected and applied automatically.
+        </div>
+        """, unsafe_allow_html=True)
+
+        uploaded_file = st.file_uploader(
+            "Select QR Code Image",
+            type=['png', 'jpg', 'jpeg', 'webp'],
+            key="qr_upload",
+            help="Upload a clear photo of the QR code"
+        )
+
+        if uploaded_file is not None:
+            try:
+                image = Image.open(uploaded_file)
+
+                col_img, col_result = st.columns([1, 1])
+
+                with col_img:
+                    st.image(image, caption="Uploaded Image", use_column_width=True)
+
+                with col_result:
+                    with st.spinner("Scanning QR code..."):
+                        qr_data = decode_qr_from_image(image)
+
+                    if qr_data:
+                        battery_id = extract_battery_id_from_url(qr_data)
+
+                        st.markdown(f"""
+                        <div class="alert alert-success">
+                            <strong>QR Code Detected</strong><br/>
+                            <span style="font-size: 1.75rem; font-weight: 700; display: block; margin: 0.5rem 0;">{battery_id}</span>
+                            <span style="font-size: 0.875rem; opacity: 0.8;">Proceeding to data entry...</span>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                        # Automatically set and proceed
+                        st.session_state['scanned_battery_id'] = battery_id
+                        st.session_state['photo_upload_open'] = False
+
+                        # Add a brief delay for user to see confirmation
+                        import time
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.markdown("""
+                        <div class="alert alert-error">
+                            <strong>No QR Code Detected</strong><br/>
+                            Please ensure the image is clear, well-lit, and the QR code is centered.
+                        </div>
+                        """, unsafe_allow_html=True)
+
+            except Exception as e:
+                st.error(f"Error processing image: {str(e)}")
+                logger.error(f"Upload error: {e}", exc_info=True)
+
+        if st.button("Cancel", key="close_upload"):
+            st.session_state['photo_upload_open'] = False
+            st.rerun()
+
+    # Camera Scanner
+    if st.session_state.get('camera_scanner_open', False):
+        st.markdown("---")
+        st.markdown("### Live Camera Scanner")
+
+        st.markdown("""
+        <div class="alert alert-info">
+            Point your camera at the QR code. The battery ID will be detected automatically.
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Hidden input to receive scanned ID from JavaScript
+        camera_scanned_id = st.text_input(
+            "Scanned ID",
+            key="camera_scanned_input",
+            label_visibility="collapsed"
+        )
+
+        # Auto-submit when ID is detected
+        if camera_scanned_id:
+            st.session_state['scanned_battery_id'] = camera_scanned_id
+            st.session_state['camera_scanner_open'] = False
+            st.rerun()
+
+        scanner_html = """
+        <div class="scanner-container">
+            <div id="reader" style="width:100%; max-width: 500px; margin: 0 auto;"></div>
+            <div id="result" style="margin-top: 1rem; font-size: 1.1rem; font-weight: 600; text-align: center; color: #2E7D32;"></div>
+        </div>
+
+        <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+        <script>
+            function onScanSuccess(decodedText, decodedResult) {
+                let batteryId = decodedText;
+                if (decodedText.includes('/entry/')) {
+                    batteryId = decodedText.split('/entry/')[1].split('?')[0].split('#')[0];
+                }
+
+                document.getElementById('result').innerHTML = 'Detected: ' + batteryId;
+
+                // Stop scanner
+                html5QrcodeScanner.clear().catch(err => console.error(err));
+
+                // Fill the hidden input field
+                const inputElements = window.parent.document.querySelectorAll('input[aria-label="Scanned ID"]');
+                if (inputElements.length > 0) {
+                    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+                    nativeInputValueSetter.call(inputElements[0], batteryId);
+                    const event = new Event('input', { bubbles: true });
+                    inputElements[0].dispatchEvent(event);
+                }
+            }
+
+            function onScanFailure(error) {
+                // Silent
+            }
+
+            let html5QrcodeScanner = new Html5QrcodeScanner(
+                "reader",
+                {
+                    fps: 10,
+                    qrbox: { width: 250, height: 250 },
+                    aspectRatio: 1.0
+                },
+                false
+            );
+
+            html5QrcodeScanner.render(onScanSuccess, onScanFailure);
+        </script>
+        """
+
+        st.components.v1.html(scanner_html, height=600)
+
+        if st.button("Cancel", key="close_camera", use_container_width=True):
+            st.session_state['camera_scanner_open'] = False
+            st.rerun()
+
+    # Display current battery ID
+    battery_pack_id = st.session_state.get('scanned_battery_id', '')
+
+    # Only show manual entry if no scanning interface is open and no ID is set
+    if not battery_pack_id and not st.session_state.get('photo_upload_open', False) and not st.session_state.get('camera_scanner_open', False):
+        st.markdown("---")
+        with st.expander("Manual Entry"):
+            st.caption("Enter Battery Pack ID manually if scanning is unavailable")
+            manual_id = st.text_input(
+                "Battery Pack ID",
+                key="manual_battery_id",
+                placeholder="Enter battery pack ID"
+            )
+
+            if st.button("Set ID", key="confirm_manual", use_container_width=True):
+                if manual_id:
+                    st.session_state['scanned_battery_id'] = manual_id
+                    st.rerun()
+                else:
+                    st.error("Please enter a Battery Pack ID")
+
+    if not battery_pack_id:
+        return
+
+    # Show selected battery ID with clear separator
+    st.markdown("---")
+    st.markdown(f"""
+    <div class="alert alert-success">
+        <strong>Current Battery Pack:</strong>
+        <span style="font-size: 1.5rem; font-weight: 700; display: block; margin: 0.5rem 0;">{battery_pack_id}</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Check if battery ID already exists
+    exists_info = check_battery_exists(battery_pack_id)
+
+    if exists_info['qr_exists'] or exists_info['data_exists']:
+        st.warning(f"""
+        **Battery Pack ID Already Exists**
+
+        - QR Code: {'✓ Exists' if exists_info['qr_exists'] else '✗ Not found'}
+        - Production Data: {'✓ Exists' if exists_info['data_exists'] else '✗ Not found'}
+
+        This battery pack ID is already in the system. You are viewing/updating existing data.
+        """)
+
+    if st.button("Scan Different Pack", key="rescan", use_container_width=False):
+        st.session_state['scanned_battery_id'] = ''
+        st.session_state['photo_upload_open'] = False
+        st.session_state['camera_scanner_open'] = False
+        st.rerun()
+
+    st.markdown("---")
+
+    # Process Selection
+    st.markdown("### Process Selection")
+
+    process_name = st.selectbox(
+        "Select Production Process",
+        options=list(PROCESS_DEFINITIONS.keys()),
+        key="process_name"
+    )
+
+    # Check if this process already has data
+    process_status = check_process_data_exists(battery_pack_id, process_name)
+
+    # For standard processes (1-7), handle start/complete workflow
+    if process_status['process_type'] == 'standard':
+        if process_status['started'] and not process_status['completed']:
+            # Process started but not completed
+            st.info(f"""
+            **Process Already Started**
+
+            Process "{process_name}" for battery pack {battery_pack_id} has been started but not completed.
+
+            Click the button below to mark this process as completed and record the end time.
+            """)
+            st.markdown('<span class="badge badge-info">In Progress - Complete to Finish</span>', unsafe_allow_html=True)
+
+            st.markdown("---")
+
+            # Show complete button
+            if st.button("Complete Process", type="primary", use_container_width=True):
+                try:
+                    complete_process(battery_pack_id, process_name)
+                    st.success(f"Process '{process_name}' completed successfully! End time recorded.")
+                    st.balloons()
+                    time.sleep(2)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Failed to complete process: {str(e)}")
+
+            # Stop here - don't show the form
+            return
+
+        elif process_status['completed']:
+            # Process fully completed
+            st.warning(f"""
+            **Process Already Completed!**
+
+            Process "{process_name}" for battery pack {battery_pack_id} has already been completed.
+
+            If you continue and save, you will **overwrite** the existing data for this process.
+            """)
+            st.markdown('<span class="badge badge-warning">Update Mode - Existing Data Will Be Overwritten</span>', unsafe_allow_html=True)
+        else:
+            # New process
+            st.markdown('<span class="badge badge-success">New Record - Create Mode</span>', unsafe_allow_html=True)
+
+    else:
+        # For non-standard processes (pack, dispatch)
+        if process_status['exists']:
+            st.warning(f"""
+            **Process Data Already Exists!**
+
+            Data has already been entered for process "{process_name}" for battery pack {battery_pack_id}.
+
+            If you continue and save, you will **overwrite** the existing data for this process.
+            """)
+            st.markdown('<span class="badge badge-warning">Update Mode - Existing Data Will Be Overwritten</span>', unsafe_allow_html=True)
+        else:
+            st.markdown('<span class="badge badge-success">New Record - Create Mode</span>', unsafe_allow_html=True)
+
+    process_def = PROCESS_DEFINITIONS.get(process_name, {})
+    qc_checks = process_def.get("qc_checks", [])
+
+    st.markdown("---")
+
+    # Data Entry Form
+    st.markdown(f"### Process: {process_name}")
+    st.caption(process_def.get('work_description', ''))
+
+    # Operator Information
+    col_tech, col_qc = st.columns(2)
+
+    with col_tech:
+        technician_name = st.text_input(
+            "Technician Name",
+            key="technician_name",
+            placeholder="Enter technician name"
+        )
+
+    with col_qc:
+        qc_name = st.text_input(
+            "QC Inspector (Optional)",
+            key="qc_name",
+            placeholder="Enter QC inspector name"
+        )
+
+    remarks = st.text_area(
+        "Remarks (Optional)",
+        key="remarks",
+        placeholder="Additional notes or observations",
+        height=100
+    )
+
+    st.markdown("---")
+
+    # Quality Control Checks
+    st.markdown("### Quality Control Checks")
+
+    if not qc_checks:
+        st.warning("No QC checks defined for this process")
+        return
+
+    checks_data = {}
+
+    for idx, check_name in enumerate(qc_checks):
+        st.markdown(f"""
+        <div class="card">
+            <div class="card-header">Check {idx+1}: {check_name}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        col_x, col_y = st.columns(2)
+
+        with col_x:
+            module_x = st.radio(
+                "Module X",
+                options=["", "OK", "NOT OK", "N/A"],
+                key=f"check_{check_name.replace(' ', '_')}_x",
+                horizontal=True
+            )
+
+        with col_y:
+            module_y = st.radio(
+                "Module Y",
+                options=["", "OK", "NOT OK", "N/A"],
+                key=f"check_{check_name.replace(' ', '_')}_y",
+                horizontal=True
+            )
+
+        if module_x or module_y:
+            checks_data[check_name] = {
+                "module_x": module_x if module_x else "",
+                "module_y": module_y if module_y else ""
+            }
+
+    st.markdown("---")
+
+    # Submit Button
+    if st.button("Save Production Data", type="primary", use_container_width=True, key="save_data"):
+        if not technician_name:
+            st.error("Technician name is required")
+            return
+
+        if not checks_data:
+            st.error("Please complete at least one QC check")
+            return
+
+        try:
+            with st.spinner("Saving data..."):
+                # Convert checks_data to list format
+                checks_list = []
+                for check_name, check_values in checks_data.items():
+                    checks_list.append({
+                        'check_name': check_name,
+                        'module_x': check_values['module_x'],
+                        'module_y': check_values['module_y']
+                    })
+
+                output_file = add_detailed_entry(
+                    battery_pack_id=battery_pack_id,
+                    process_name=process_name,
+                    technician_name=technician_name,
+                    qc_name=qc_name,
+                    remarks=remarks,
+                    checks=checks_list
+                )
+
+                st.success("Production data saved successfully")
+                st.info(f"File: {output_file}")
+                logger.info(f"Data saved for {battery_pack_id}, process: {process_name}")
+
+                # Clear form
+                st.session_state['scanned_battery_id'] = ''
+                for key in list(st.session_state.keys()):
+                    if key.startswith('check_'):
+                        del st.session_state[key]
+
+                if st.button("Enter Next Pack", key="scan_next"):
+                    st.rerun()
+
+        except Exception as e:
+            st.error(f"Failed to save: {str(e)}")
+            logger.error(f"Data entry failed: {e}")
+
+
+# ============================================================================
+# QR CODE GENERATOR TAB
+# ============================================================================
+
+def render_qr_generator_tab():
+    """Render QR Code Generator tab."""
+    st.markdown("## QR Code Generator")
+    st.caption("Generate QR codes for battery pack identification")
+
+    st.markdown("---")
+
+    battery_pack_id = st.text_input(
+        "Battery Pack ID",
+        placeholder="Enter battery pack identifier",
+        key="qr_battery_id"
+    )
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        size = st.selectbox("QR Code Size (px)", options=[200, 300, 400, 500], index=1, key="qr_size")
+    with col_b:
+        include_label = st.checkbox("Include Text Label", value=True, key="qr_label")
+
+    if st.button("Generate QR Code", type="primary", use_container_width=True):
+        if not battery_pack_id:
+            st.error("Please enter a Battery Pack ID")
+        else:
+            # Check if battery ID already exists
+            exists_info = check_battery_exists(battery_pack_id)
+
+            if exists_info['qr_exists'] or exists_info['data_exists']:
+                st.warning(f"""
+                ⚠️ **Battery Pack ID Already Exists!**
+
+                - QR Code exists: {'Yes' if exists_info['qr_exists'] else 'No'}
+                - Data exists: {'Yes' if exists_info['data_exists'] else 'No'}
+
+                This battery pack ID is already in use. Each battery must have a unique ID.
+                Please use a different ID or check existing records.
+                """)
+            else:
+                try:
+                    qr_bytes = generate_qr_code(battery_pack_id, size=size, include_label=include_label)
+                    st.session_state['qr_image'] = qr_bytes
+                    st.session_state['qr_pack_id'] = battery_pack_id
+                    st.success(f"✅ QR code generated and saved for {battery_pack_id}")
+                    st.info(f"📁 Saved to: qr_codes/{battery_pack_id}.png")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Generation failed: {str(e)}")
+
+    if 'qr_image' in st.session_state:
+        st.markdown("---")
+        st.markdown("### Generated QR Code")
+        st.image(st.session_state['qr_image'], use_column_width=True)
+        st.download_button(
+            label="Download QR Code",
+            data=st.session_state['qr_image'],
+            file_name=f"{st.session_state['qr_pack_id']}.png",
+            mime="image/png",
+            use_container_width=True
+        )
+
+
+# ============================================================================
+# DASHBOARD TAB
+# ============================================================================
+
+def render_dashboard_tab():
+    """Render production dashboard with Pack Tracker and Production Charts."""
+    st.markdown("## Production Dashboard")
+    st.caption("Battery Pack Tracker and Production Analytics")
+
+    try:
+        # Read from master sample.xlsx file
+        master_file = Path("sample.xlsx")
+
+        if not master_file.exists():
+            st.info("No production data available. sample.xlsx not found.")
+            return
+
+        # Load master workbook
+        wb = openpyxl.load_workbook(master_file, read_only=True)
+
+        # Get all sheets except the template (first sheet)
+        battery_sheets = [sheet for sheet in wb.sheetnames[1:]]  # Skip first sheet (template)
+
+        if not battery_sheets:
+            st.info("No production reports found. Begin tracking battery packs to see metrics here.")
+            wb.close()
+            return
+
+        st.markdown("---")
+
+        # ZMC Pack Tracker Table
+        st.markdown("### Battery Pack Tracker")
+
+        # Read data from Excel sheets and build tracker
+        tracker_data = []
+        process_stages = ["Cell sorting", "Module assembly", "Pre Encapsulation", "Wire Bonding",
+                         "Post Encapsulation", "EOL Testing", "Pack assembly", "Ready for Dispatch"]
+
+        for idx, sheet_name in enumerate(sorted(battery_sheets), 1):
+            try:
+                ws = wb[sheet_name]
+
+                # Extract process data from sheet
+                pack_id = sheet_name
+                row_data = {"Sl.No": idx, "Battery Pack": pack_id}
+
+                # Read actual QC data from Excel
+                process_qc_results = {}  # Store QC results for each process
+
+                # Parse Excel file to extract QC check results
+                current_process = None
+                for row in ws.iter_rows(min_row=2, values_only=True):
+                    if not row or not row[0]:
+                        continue
+
+                    # Check if this is a process name row
+                    cell_value = str(row[0]).strip()
+
+                    # If it looks like a process name (not a check ID)
+                    if cell_value and not cell_value.startswith('QC'):
+                        current_process = cell_value
+                        if current_process not in process_qc_results:
+                            process_qc_results[current_process] = {"checks": [], "all_ok": True}
+
+                    # If we have a current process and this looks like QC data
+                    elif current_process and len(row) >= 3:
+                        # Extract Module X and Module Y results
+                        # Typically: [Check ID, Module X, Module Y, ...]
+                        module_x = str(row[1]).strip() if row[1] else ""
+                        module_y = str(row[2]).strip() if row[2] else ""
+
+                        # Check if either module has issues
+                        if "NOT OK" in module_x or "NOT OK" in module_y:
+                            process_qc_results[current_process]["all_ok"] = False
+                            process_qc_results[current_process]["checks"].append("NOT OK")
+                        elif "OK" in module_x or "OK" in module_y:
+                            process_qc_results[current_process]["checks"].append("OK")
+
+                # Map processes to standard stages
+                qc_ok_count = 0
+                for stage in process_stages:
+                    stage_status = "0"
+
+                    # Find matching process in QC results
+                    for process_name, qc_data in process_qc_results.items():
+                        # Match stage name with process name (flexible matching)
+                        if any(word.lower() in process_name.lower() for word in stage.split() if len(word) > 3):
+                            # Determine status based on actual QC results
+                            if len(qc_data["checks"]) > 0:
+                                if qc_data["all_ok"]:
+                                    stage_status = "QC OK"
+                                    qc_ok_count += 1
+                                else:
+                                    stage_status = "OK with Deviation"
+                            break
+
+                    row_data[stage] = stage_status
+
+                # Determine final status: Only "Ready to dispatch" if ALL 8 processes are QC OK
+                if qc_ok_count >= 8:
+                    row_data["Status"] = "Ready to dispatch"
+                elif qc_ok_count > 0:
+                    row_data["Status"] = "In Process"
+                else:
+                    row_data["Status"] = "Not Started"
+
+                tracker_data.append(row_data)
+                wb.close()
+
+            except Exception as e:
+                logger.error(f"Error reading {file}: {e}")
+                continue
+
+        # Create DataFrame
+        if tracker_data:
+            df_tracker = pd.DataFrame(tracker_data)
+
+            # Style the dataframe
+            def style_cell(val):
+                if val == "QC OK":
+                    return 'background-color: #c8e6c9; color: #2e7d32; font-weight: 500;'
+                elif val == "OK with Deviation":
+                    return 'background-color: #fff9c4; color: #f57c00; font-weight: 500;'
+                elif val == "Ready to dispatch":
+                    return 'background-color: #2e7d32; color: white; font-weight: 700; text-align: center;'
+                elif val == "In Process":
+                    return 'background-color: #1976d2; color: white; font-weight: 600; text-align: center;'
+                elif val == "Not Started":
+                    return 'background-color: #9e9e9e; color: white; font-weight: 500; text-align: center;'
+                elif val == "0":
+                    return 'background-color: #f5f5f5; color: #9e9e9e;'
+                return ''
+
+            # Display as styled table
+            st.dataframe(
+                df_tracker.style.applymap(style_cell),
+                use_container_width=True,
+                height=400
+            )
+
+        st.markdown("---")
+
+        # Production Charts
+        col_chart1, col_chart2 = st.columns(2)
+
+        # Calculate metrics
+        total_packs = len(excel_files)
+        target_packs = 50  # This could be configured
+
+        # Count packs by status
+        completed_packs = sum(1 for row in tracker_data if row.get("Status") == "Ready to dispatch")
+        in_process_packs = sum(1 for row in tracker_data if row.get("Status") == "In Process")
+        not_started_packs = sum(1 for row in tracker_data if row.get("Status") == "Not Started")
+        rejected_packs = 0  # Could track packs with critical failures
+
+        with col_chart1:
+            st.markdown("### Plan vs Actual in Packs")
+
+            # Bar chart data
+            bar_data = pd.DataFrame({
+                'Category': ['Target', 'Completed', 'In Process', 'Rejected'],
+                'Count': [target_packs, completed_packs, in_process_packs, rejected_packs]
+            })
+
+            # Create plotly bar chart
+            fig_bar = go.Figure(data=[
+                go.Bar(
+                    x=bar_data['Category'],
+                    y=bar_data['Count'],
+                    marker_color=['#1976D2', '#FF9800', '#FFA726', '#EF5350'],
+                    text=bar_data['Count'],
+                    textposition='outside',
+                    textfont=dict(size=14, color='black', family='Arial Black')
+                )
+            ])
+
+            fig_bar.update_layout(
+                height=350,
+                margin=dict(l=20, r=20, t=40, b=40),
+                yaxis=dict(range=[0, max(target_packs, completed_packs, in_process_packs) * 1.2]),
+                plot_bgcolor='white',
+                paper_bgcolor='white',
+                font=dict(size=12, color='#424242')
+            )
+
+            st.plotly_chart(fig_bar, use_container_width=True)
+
+        with col_chart2:
+            st.markdown("### Production Plan in %")
+
+            # Calculate percentages
+            total_actual = completed_packs + in_process_packs + rejected_packs
+            if target_packs > 0:
+                completed_pct = (completed_packs / target_packs) * 100
+                in_process_pct = (in_process_packs / target_packs) * 100
+                rejected_pct = (rejected_packs / target_packs) * 100
+                target_pct = 100
+            else:
+                completed_pct = in_process_pct = rejected_pct = target_pct = 0
+
+            # Pie chart data
+            pie_data = pd.DataFrame({
+                'Status': ['Target', 'Completed', 'In Process', 'Rejected'],
+                'Percentage': [target_pct, completed_pct, in_process_pct, rejected_pct]
+            })
+
+            # Create plotly pie chart
+            fig_pie = go.Figure(data=[go.Pie(
+                labels=pie_data['Status'],
+                values=pie_data['Percentage'],
+                marker=dict(colors=['#1976D2', '#FF9800', '#4CAF50', '#EF5350']),
+                textinfo='label+percent',
+                textfont=dict(size=12, color='white', family='Arial'),
+                hole=0
+            )])
+
+            fig_pie.update_layout(
+                height=350,
+                margin=dict(l=20, r=20, t=20, b=20),
+                showlegend=True,
+                legend=dict(
+                    orientation="v",
+                    yanchor="middle",
+                    y=0.5,
+                    xanchor="left",
+                    x=1.05
+                ),
+                plot_bgcolor='white',
+                paper_bgcolor='white'
+            )
+
+            st.plotly_chart(fig_pie, use_container_width=True)
+
+    except Exception as e:
+        st.error(f"Error loading dashboard: {str(e)}")
+        logger.error(f"Dashboard error: {e}")
+
+
+# ============================================================================
+# REPORTS TAB
+# ============================================================================
+
+def render_reports_tab():
+    """Render reports management interface."""
+    st.markdown("## Production Reports")
+    st.caption("View, search, and download production reports")
+
+    try:
+        # Read from master sample.xlsx file
+        master_file = Path("sample.xlsx")
+
+        if not master_file.exists():
+            st.info("No reports found. sample.xlsx not found.")
+            return
+
+        # Load workbook to get sheet names
+        wb = openpyxl.load_workbook(master_file, read_only=True)
+        battery_sheets = [sheet for sheet in wb.sheetnames[1:]]  # Skip template
+        wb.close()
+
+        if not battery_sheets:
+            st.info("No reports available. Generate QR codes and enter production data to create reports.")
+            return
+
+        st.markdown("---")
+
+        # Search and Filter
+        col_search, col_sort = st.columns([3, 1])
+
+        with col_search:
+            search_term = st.text_input(
+                "Search Reports",
+                placeholder="Enter battery pack ID to search",
+                key="search_reports"
+            )
+
+        with col_sort:
+            sort_order = st.selectbox(
+                "Sort By",
+                options=["Newest First", "Oldest First", "Name A-Z", "Name Z-A"],
+                key="sort_reports"
+            )
+
+        # Filter sheets
+        if search_term:
+            filtered_sheets = [s for s in battery_sheets if search_term.lower() in s.lower()]
+        else:
+            filtered_sheets = battery_sheets
+
+        # Sort sheets
+        if sort_order == "Name A-Z":
+            filtered_sheets = sorted(filtered_sheets)
+        elif sort_order == "Name Z-A":
+            filtered_sheets = sorted(filtered_sheets, reverse=True)
+        else:
+            # For time-based sorting, just use alphabetical
+            filtered_sheets = sorted(filtered_sheets)
+
+        st.caption(f"Showing {len(filtered_sheets)} of {len(battery_sheets)} reports")
+
+        st.markdown("---")
+
+        # Display sheets
+        for sheet_name in filtered_sheets:
+            col1, col2 = st.columns([4, 1])
+
+            with col1:
+                st.markdown(f"**{sheet_name}**")
+                st.caption(f"Sheet in: sample.xlsx")
+
+            with col2:
+                # For downloading, we'll offer to download the whole file
+                with open(master_file, 'rb') as f:
+                    st.download_button(
+                        label="Download File",
+                        data=f,
+                        file_name=f"sample_{sheet_name}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key=f"download_{sheet_name}",
+                        use_container_width=True
+                    )
+
+            st.markdown('<hr style="margin: 0.5rem 0;">', unsafe_allow_html=True)
+
+        st.markdown("---")
+
+        # Bulk Export
+        st.markdown("### Bulk Actions")
+
+        if st.button("Download Complete File (sample.xlsx)", use_container_width=True):
+            with open(master_file, 'rb') as f:
+                st.download_button(
+                    label="Click to Download sample.xlsx",
+                    data=f,
+                    file_name="sample.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="download_complete",
+                    use_container_width=True
+                )
+
+            st.download_button(
+                label="Download CSV",
+                data=csv,
+                file_name=f"production_reports_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+
+    except Exception as e:
+        st.error(f"Error loading reports: {str(e)}")
+        logger.error(f"Reports error: {e}")
+
+
+# ============================================================================
+# MAIN APPLICATION
+# ============================================================================
+
+def main():
+    """Main application entry point."""
+
+    # Header
+    st.title("Battery Pack MES")
+    st.caption("Manufacturing Execution System")
+
+    # Navigation Tabs
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "Data Entry",
+        "QR Generator",
+        "Dashboard",
+        "Reports"
+    ])
+
+    with tab1:
+        render_data_entry_tab()
+
+    with tab2:
+        render_qr_generator_tab()
+
+    with tab3:
+        render_dashboard_tab()
+
+    with tab4:
+        render_reports_tab()
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:
+        logger.error(f"Application error: {e}", exc_info=True)
+        st.error(f"Application error: {str(e)}")
