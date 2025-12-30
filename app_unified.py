@@ -1555,7 +1555,7 @@ def render_dashboard_tab():
         col_chart1, col_chart2 = st.columns(2)
 
         # Calculate metrics
-        total_packs = len(excel_files)
+        total_packs = len(battery_sheets)
         target_packs = 50  # This could be configured
 
         # Count packs by status
