@@ -14,5 +14,8 @@ openpyxl>=3.1.0
 # Charts and visualization
 plotly>=5.18.0
 
+# Database (for Option 1: Quick Fix)
+psycopg2-binary>=2.9.9
+
 # Utilities
 python-dateutil==2.8.2
