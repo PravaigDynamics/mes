@@ -14,8 +14,40 @@ from database import get_qc_checks, get_all_battery_packs
 
 logger = logging.getLogger(__name__)
 
-# Import from app_unified to keep exact same mapping
-from app_unified import PROCESS_ROW_MAPPING, safe_write_cell
+# Row mapping for Excel sheet - Duplicated here to avoid circular import
+PROCESS_ROW_MAPPING = {
+    "Cell sorting": {"start_row": 8, "type": "standard"},
+    "Module assembly": {"start_row": 11, "type": "standard"},
+    "Pre Encapsulation": {"start_row": 14, "type": "standard"},
+    "Wire Bonding": {"start_row": 17, "type": "standard"},
+    "Post Encapsulation": {"start_row": 20, "type": "standard"},
+    "EOL Testing": {"start_row": 38, "type": "standard"},
+    "Pack assembly": {"start_row": 40, "type": "pack"},
+    "Ready for Dispatch": {"start_row": 62, "type": "dispatch"}
+}
+
+
+def safe_write_cell(ws, row: int, column: int, value):
+    """Safely write to a cell, handling merged cells."""
+    try:
+        cell = ws.cell(row=row, column=column)
+        # Check if this is a MergedCell
+        if isinstance(cell, openpyxl.cell.cell.MergedCell):
+            # Find the merged range this cell belongs to
+            for merged_range in ws.merged_cells.ranges:
+                if cell.coordinate in merged_range:
+                    # Get the top-left cell of the merged range
+                    min_row = merged_range.min_row
+                    min_col = merged_range.min_col
+                    top_left_cell = ws.cell(row=min_row, column=min_col)
+                    top_left_cell.value = value
+                    return
+        else:
+            # Normal cell, write directly
+            cell.value = value
+    except Exception as e:
+        logger.error(f"Error writing to cell ({row}, {column}): {e}")
+        raise
 
 
 def generate_battery_excel(battery_pack_id: str) -> Optional[Path]:

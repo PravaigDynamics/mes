@@ -1,10 +1,12 @@
 """
-Database layer for Battery Pack MES - FIXED VERSION
-Handles concurrent data writes safely
+Database layer for Battery Pack MES - CONCURRENT ACCESS VERSION
+Handles concurrent data writes safely with retry logic
 Supports both PostgreSQL (production) and SQLite (local testing)
+Enhanced for multiple simultaneous users
 """
 
 import os
+import time
 import logging
 from typing import List, Dict, Optional
 from datetime import datetime
@@ -14,6 +16,11 @@ logger = logging.getLogger(__name__)
 # Database connection handling
 _connection_pool = None
 
+# Concurrent access configuration
+MAX_RETRIES = 10
+RETRY_DELAY = 0.1  # 100ms initial delay
+MAX_RETRY_DELAY = 2.0  # 2 seconds max delay
+
 
 def get_database_url():
     """Get database URL from environment or use local SQLite fallback"""
@@ -21,7 +28,7 @@ def get_database_url():
 
 
 def get_connection():
-    """Get database connection (PostgreSQL or SQLite)"""
+    """Get database connection (PostgreSQL or SQLite) with concurrent access support"""
     db_url = get_database_url()
 
     if db_url.startswith('postgres'):
@@ -29,16 +36,83 @@ def get_connection():
         import psycopg2
         return psycopg2.connect(db_url)
     else:
-        # SQLite
+        # SQLite with optimizations for concurrent access
         import sqlite3
-        conn = sqlite3.connect('battery_mes.db')
+
+        # Increased timeout for concurrent writes (30 seconds)
+        conn = sqlite3.connect('battery_mes.db', timeout=30.0, check_same_thread=False)
         conn.row_factory = sqlite3.Row
+
+        # Enable WAL mode for better concurrent access
+        # WAL allows multiple readers and one writer at the same time
+        conn.execute('PRAGMA journal_mode=WAL')
+
+        # Set synchronous mode to NORMAL for better performance while maintaining safety
+        conn.execute('PRAGMA synchronous=NORMAL')
+
+        # Enable auto-checkpoint at 1000 pages
+        conn.execute('PRAGMA wal_autocheckpoint=1000')
+
+        # Increase cache size for better performance (10MB)
+        conn.execute('PRAGMA cache_size=-10000')
+
         return conn
 
 
 def release_connection(conn):
     """Close connection"""
     conn.close()
+
+
+def retry_on_db_lock(func):
+    """
+    Decorator to retry database operations on lock/busy errors
+    Essential for concurrent access with SQLite
+    """
+    def wrapper(*args, **kwargs):
+        import sqlite3
+
+        delay = RETRY_DELAY
+        for attempt in range(MAX_RETRIES):
+            try:
+                return func(*args, **kwargs)
+
+            except sqlite3.OperationalError as e:
+                error_msg = str(e).lower()
+
+                # Retry only on database locked/busy errors
+                if 'locked' in error_msg or 'busy' in error_msg:
+                    if attempt < MAX_RETRIES - 1:
+                        logger.warning(f"Database locked on attempt {attempt + 1}, retrying in {delay}s...")
+                        time.sleep(delay)
+
+                        # Exponential backoff with jitter
+                        delay = min(delay * 2, MAX_RETRY_DELAY)
+                        continue
+                    else:
+                        logger.error(f"Database locked after {MAX_RETRIES} attempts")
+                        raise
+
+                # Re-raise non-lock errors immediately
+                raise
+
+            except Exception as e:
+                # PostgreSQL or other errors - check if it's a serialization error
+                error_msg = str(e).lower()
+                if 'serialization' in error_msg or 'deadlock' in error_msg:
+                    if attempt < MAX_RETRIES - 1:
+                        logger.warning(f"Serialization error on attempt {attempt + 1}, retrying...")
+                        time.sleep(delay)
+                        delay = min(delay * 2, MAX_RETRY_DELAY)
+                        continue
+
+                # Re-raise all other errors
+                raise
+
+        # Should never reach here, but just in case
+        raise Exception(f"Failed after {MAX_RETRIES} retries")
+
+    return wrapper
 
 
 def init_database():
@@ -131,8 +205,9 @@ def init_database():
         release_connection(conn)
 
 
+@retry_on_db_lock
 def save_battery_pack(pack_id: str) -> bool:
-    """Create or update battery pack record"""
+    """Create or update battery pack record with retry on lock"""
     conn = get_connection()
     db_url = get_database_url()
     is_postgres = db_url.startswith('postgres')
@@ -155,6 +230,7 @@ def save_battery_pack(pack_id: str) -> bool:
             """, (pack_id, timestamp, timestamp))
 
         conn.commit()
+        logger.debug(f"Saved battery pack: {pack_id}")
         return True
 
     except Exception as e:
@@ -165,9 +241,16 @@ def save_battery_pack(pack_id: str) -> bool:
         release_connection(conn)
 
 
+@retry_on_db_lock
 def save_qc_checks(pack_id: str, process_name: str, technician_name: str,
                    qc_name: str, remarks: str, checks: List[Dict]) -> bool:
-    """Save QC check data to database"""
+    """
+    Save QC check data to database with retry on lock (handles concurrent writes)
+    IMPORTANT: This function MERGES data instead of overwriting
+    - If Employee X saves Module X data, it updates only Module X fields
+    - If Employee B saves Module Y data, it updates only Module Y fields
+    - Both modules' data are preserved!
+    """
     conn = get_connection()
     db_url = get_database_url()
     is_postgres = db_url.startswith('postgres')
@@ -178,41 +261,93 @@ def save_qc_checks(pack_id: str, process_name: str, technician_name: str,
         # Ensure battery pack exists
         save_battery_pack(pack_id)
 
-        # Delete existing data for this pack + process
-        if is_postgres:
-            cur.execute("DELETE FROM qc_checks WHERE pack_id = %s AND process_name = %s",
-                       (pack_id, process_name))
-        else:
-            cur.execute("DELETE FROM qc_checks WHERE pack_id = ? AND process_name = ?",
-                       (pack_id, process_name))
+        # Use immediate transaction for write lock (SQLite)
+        if not is_postgres:
+            conn.isolation_level = 'IMMEDIATE'
 
-        # Insert new check data
         timestamp = datetime.now()
 
+        # MERGE strategy: Update or Insert each check
         for check in checks:
+            check_name = check.get('check_name', '')
+            module_x_value = check.get('module_x', '')
+            module_y_value = check.get('module_y', '')
+
+            # Check if this check already exists
             if is_postgres:
                 cur.execute("""
-                    INSERT INTO qc_checks
-                    (pack_id, process_name, check_name, module_x, module_y,
-                     technician_name, qc_name, remarks, start_date, created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """, (pack_id, process_name, check.get('check_name', ''),
-                      check.get('module_x', ''), check.get('module_y', ''),
-                      technician_name, qc_name, remarks,
-                      timestamp, timestamp, timestamp))
+                    SELECT id, module_x, module_y FROM qc_checks
+                    WHERE pack_id = %s AND process_name = %s AND check_name = %s
+                    LIMIT 1
+                """, (pack_id, process_name, check_name))
             else:
                 cur.execute("""
-                    INSERT INTO qc_checks
-                    (pack_id, process_name, check_name, module_x, module_y,
-                     technician_name, qc_name, remarks, start_date, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (pack_id, process_name, check.get('check_name', ''),
-                      check.get('module_x', ''), check.get('module_y', ''),
-                      technician_name, qc_name, remarks,
-                      timestamp, timestamp, timestamp))
+                    SELECT id, module_x, module_y FROM qc_checks
+                    WHERE pack_id = ? AND process_name = ? AND check_name = ?
+                    LIMIT 1
+                """, (pack_id, process_name, check_name))
+
+            existing_row = cur.fetchone()
+
+            if existing_row:
+                # Row exists - UPDATE only fields that have data
+                row_id = existing_row[0]
+                existing_module_x = existing_row[1] if len(existing_row) > 1 else ''
+                existing_module_y = existing_row[2] if len(existing_row) > 2 else ''
+
+                # Merge logic: Keep existing data if new data is empty
+                final_module_x = module_x_value if module_x_value else existing_module_x
+                final_module_y = module_y_value if module_y_value else existing_module_y
+
+                # Update the row with merged data
+                if is_postgres:
+                    cur.execute("""
+                        UPDATE qc_checks
+                        SET module_x = %s, module_y = %s,
+                            technician_name = %s, qc_name = %s, remarks = %s,
+                            updated_at = %s
+                        WHERE id = %s
+                    """, (final_module_x, final_module_y, technician_name, qc_name,
+                          remarks, timestamp, row_id))
+                else:
+                    cur.execute("""
+                        UPDATE qc_checks
+                        SET module_x = ?, module_y = ?,
+                            technician_name = ?, qc_name = ?, remarks = ?,
+                            updated_at = ?
+                        WHERE id = ?
+                    """, (final_module_x, final_module_y, technician_name, qc_name,
+                          remarks, timestamp, row_id))
+
+                logger.debug(f"Updated check '{check_name}' - Module X: '{final_module_x}', Module Y: '{final_module_y}'")
+
+            else:
+                # Row doesn't exist - INSERT new row
+                if is_postgres:
+                    cur.execute("""
+                        INSERT INTO qc_checks
+                        (pack_id, process_name, check_name, module_x, module_y,
+                         technician_name, qc_name, remarks, start_date, created_at, updated_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """, (pack_id, process_name, check_name,
+                          module_x_value, module_y_value,
+                          technician_name, qc_name, remarks,
+                          timestamp, timestamp, timestamp))
+                else:
+                    cur.execute("""
+                        INSERT INTO qc_checks
+                        (pack_id, process_name, check_name, module_x, module_y,
+                         technician_name, qc_name, remarks, start_date, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (pack_id, process_name, check_name,
+                          module_x_value, module_y_value,
+                          technician_name, qc_name, remarks,
+                          timestamp, timestamp, timestamp))
+
+                logger.debug(f"Inserted new check '{check_name}' - Module X: '{module_x_value}', Module Y: '{module_y_value}'")
 
         conn.commit()
-        logger.info(f"Saved {len(checks)} QC checks for {pack_id} - {process_name}")
+        logger.info(f"Saved/merged {len(checks)} QC checks for {pack_id} - {process_name}")
         return True
 
     except Exception as e:
@@ -223,8 +358,9 @@ def save_qc_checks(pack_id: str, process_name: str, technician_name: str,
         release_connection(conn)
 
 
+@retry_on_db_lock
 def update_process_completion(pack_id: str, process_name: str) -> bool:
-    """Update end_date for a process (when "Complete Process" is clicked)"""
+    """Update end_date for a process with retry on lock (handles concurrent updates)"""
     conn = get_connection()
     db_url = get_database_url()
     is_postgres = db_url.startswith('postgres')
@@ -239,6 +375,8 @@ def update_process_completion(pack_id: str, process_name: str) -> bool:
                 WHERE pack_id = %s AND process_name = %s
             """, (timestamp, timestamp, pack_id, process_name))
         else:
+            # Use immediate transaction for write lock
+            conn.isolation_level = 'IMMEDIATE'
             cur.execute("""
                 UPDATE qc_checks SET end_date = ?, updated_at = ?
                 WHERE pack_id = ? AND process_name = ?
@@ -374,12 +512,19 @@ def get_dashboard_status() -> List[Dict]:
 
 
 def check_process_status(pack_id: str, process_name: str) -> Dict:
-    """Check if process has data and completion status"""
+    """
+    Check if process has data and completion status
+    Enhanced to check if BOTH modules are complete
+    """
     result = {
         'exists': False,
         'started': False,
         'completed': False,
-        'process_type': None
+        'process_type': None,
+        'both_modules_complete': False,
+        'module_x_complete': False,
+        'module_y_complete': False,
+        'has_any_data': False
     }
 
     try:
@@ -393,8 +538,33 @@ def check_process_status(pack_id: str, process_name: str) -> Dict:
 
         if checks:
             result['exists'] = True
+            result['has_any_data'] = True
             result['started'] = any(check.get('start_date') for check in checks)
             result['completed'] = any(check.get('end_date') for check in checks)
+
+            # Check if both modules are complete (all non-empty)
+            module_x_count = 0
+            module_y_count = 0
+            total_checks = len(checks)
+
+            for check in checks:
+                module_x = check.get('module_x', '').strip()
+                module_y = check.get('module_y', '').strip()
+
+                # Count non-empty values
+                if module_x and module_x not in ['', 'N/A']:
+                    module_x_count += 1
+                if module_y and module_y not in ['', 'N/A']:
+                    module_y_count += 1
+
+            # Module is complete if all checks have data
+            result['module_x_complete'] = module_x_count == total_checks
+            result['module_y_complete'] = module_y_count == total_checks
+            result['both_modules_complete'] = result['module_x_complete'] and result['module_y_complete']
+
+            logger.debug(f"Process status for {pack_id}-{process_name}: "
+                        f"Module X: {module_x_count}/{total_checks}, "
+                        f"Module Y: {module_y_count}/{total_checks}")
 
         return result
 

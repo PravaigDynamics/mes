@@ -1017,42 +1017,80 @@ def render_data_entry_tab():
 
     # For standard processes (1-7), handle start/complete workflow
     if process_status['process_type'] == 'standard':
-        if process_status['started'] and not process_status['completed']:
-            # Process started but not completed
-            st.info(f"""
-            **Process Already Started**
+        if process_status['completed']:
+            # Process fully completed - show edit option
+            st.success(f"""
+            **Process Completed ✓**
 
-            Process "{process_name}" for battery pack {battery_pack_id} has been started but not completed.
-
-            Click the button below to mark this process as completed and record the end time.
+            Process "{process_name}" for battery pack {battery_pack_id} has been completed.
             """)
-            st.markdown('<span class="badge badge-info">In Progress - Complete to Finish</span>', unsafe_allow_html=True)
+            st.markdown('<span class="badge badge-success">Completed</span>', unsafe_allow_html=True)
+
+            st.markdown("---")
+
+            # Show edit button
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("📝 Edit Data", use_container_width=True, type="secondary"):
+                    st.session_state['edit_mode'] = True
+                    st.rerun()
+
+            # If not in edit mode, stop here
+            if not st.session_state.get('edit_mode', False):
+                return
+
+            # In edit mode - show form below
+            st.info("**Edit Mode:** Modify the data below and click Save to update.")
+
+        elif process_status['has_any_data'] and process_status['both_modules_complete'] and not process_status['completed']:
+            # Both modules filled, but not marked complete - show complete button + continue to form
+            st.info(f"""
+            **Both Modules Complete - Ready to Finalize**
+
+            Both Module X and Module Y data have been entered for process "{process_name}".
+
+            You can mark this process as complete, or continue editing the data below.
+            """)
+            st.markdown('<span class="badge badge-info">Ready to Complete</span>', unsafe_allow_html=True)
 
             st.markdown("---")
 
             # Show complete button
-            if st.button("Complete Process", type="primary", use_container_width=True):
-                try:
-                    complete_process(battery_pack_id, process_name)
-                    st.success(f"Process '{process_name}' completed successfully! End time recorded.")
-                    st.balloons()
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Failed to complete process: {str(e)}")
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("✓ Complete Process", type="primary", use_container_width=True):
+                    try:
+                        complete_process(battery_pack_id, process_name)
+                        st.success(f"Process '{process_name}' completed successfully! End time recorded.")
+                        st.balloons()
+                        # Clear edit mode
+                        if 'edit_mode' in st.session_state:
+                            del st.session_state['edit_mode']
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed to complete process: {str(e)}")
 
-            # Stop here - don't show the form
-            return
+            # Continue to show form for editing
 
-        elif process_status['completed']:
-            # Process fully completed
+        elif process_status['has_any_data'] and not process_status['both_modules_complete']:
+            # Partial data - show what's missing
+            missing_info = []
+            if not process_status['module_x_complete']:
+                missing_info.append("Module X")
+            if not process_status['module_y_complete']:
+                missing_info.append("Module Y")
+
             st.warning(f"""
-            **Process Already Completed!**
+            **Partial Data Entry**
 
-            Process "{process_name}" for battery pack {battery_pack_id} has already been completed.
+            Some data has been entered, but the process is incomplete.
 
-            If you continue and save, you will **overwrite** the existing data for this process.
+            Missing data for: **{', '.join(missing_info)}**
+
+            Continue filling in the data below.
             """)
-            st.markdown('<span class="badge badge-warning">Update Mode - Existing Data Will Be Overwritten</span>', unsafe_allow_html=True)
+            st.markdown('<span class="badge badge-warning">Partial - Continue Entry</span>', unsafe_allow_html=True)
+
         else:
             # New process
             st.markdown('<span class="badge badge-success">New Record - Create Mode</span>', unsafe_allow_html=True)
@@ -1065,14 +1103,41 @@ def render_data_entry_tab():
 
             Data has already been entered for process "{process_name}" for battery pack {battery_pack_id}.
 
-            If you continue and save, you will **overwrite** the existing data for this process.
+            You can edit the data below. Click Save to update.
             """)
-            st.markdown('<span class="badge badge-warning">Update Mode - Existing Data Will Be Overwritten</span>', unsafe_allow_html=True)
+            st.markdown('<span class="badge badge-warning">Edit Mode</span>', unsafe_allow_html=True)
         else:
             st.markdown('<span class="badge badge-success">New Record - Create Mode</span>', unsafe_allow_html=True)
 
     process_def = PROCESS_DEFINITIONS.get(process_name, {})
     qc_checks = process_def.get("qc_checks", [])
+
+    # Load existing data if available
+    existing_data = {}
+    existing_technician = ""
+    existing_qc = ""
+    existing_remarks = ""
+
+    if process_status['has_any_data']:
+        try:
+            from database import get_qc_checks
+            checks = get_qc_checks(battery_pack_id, process_name)
+
+            if checks:
+                # Get operator info from first check (all have same values)
+                existing_technician = checks[0].get('technician_name', '')
+                existing_qc = checks[0].get('qc_name', '')
+                existing_remarks = checks[0].get('remarks', '')
+
+                # Build existing data dict
+                for check in checks:
+                    check_name = check.get('check_name', '')
+                    existing_data[check_name] = {
+                        'module_x': check.get('module_x', ''),
+                        'module_y': check.get('module_y', '')
+                    }
+        except Exception as e:
+            logger.error(f"Error loading existing data: {e}")
 
     st.markdown("---")
 
@@ -1086,6 +1151,7 @@ def render_data_entry_tab():
     with col_tech:
         technician_name = st.text_input(
             "Technician Name",
+            value=existing_technician,
             key="technician_name",
             placeholder="Enter technician name"
         )
@@ -1093,12 +1159,14 @@ def render_data_entry_tab():
     with col_qc:
         qc_name = st.text_input(
             "QC Inspector (Optional)",
+            value=existing_qc,
             key="qc_name",
             placeholder="Enter QC inspector name"
         )
 
     remarks = st.text_area(
         "Remarks (Optional)",
+        value=existing_remarks,
         key="remarks",
         placeholder="Additional notes or observations",
         height=100
@@ -1122,12 +1190,23 @@ def render_data_entry_tab():
         </div>
         """, unsafe_allow_html=True)
 
+        # Get existing values for this check
+        existing_check = existing_data.get(check_name, {})
+        existing_module_x = existing_check.get('module_x', '')
+        existing_module_y = existing_check.get('module_y', '')
+
+        # Find index of existing value in options
+        options = ["", "OK", "NOT OK", "N/A"]
+        default_x_index = options.index(existing_module_x) if existing_module_x in options else 0
+        default_y_index = options.index(existing_module_y) if existing_module_y in options else 0
+
         col_x, col_y = st.columns(2)
 
         with col_x:
             module_x = st.radio(
                 "Module X",
-                options=["", "OK", "NOT OK", "N/A"],
+                options=options,
+                index=default_x_index,
                 key=f"check_{idx}_{check_name.replace(' ', '_').replace('/', '_')}_x",
                 horizontal=True
             )
@@ -1135,7 +1214,8 @@ def render_data_entry_tab():
         with col_y:
             module_y = st.radio(
                 "Module Y",
-                options=["", "OK", "NOT OK", "N/A"],
+                options=options,
+                index=default_y_index,
                 key=f"check_{idx}_{check_name.replace(' ', '_').replace('/', '_')}_y",
                 horizontal=True
             )
@@ -1195,8 +1275,10 @@ def render_data_entry_tab():
                 st.info(f"File: {output_file}")
                 logger.info(f"Data saved for {battery_pack_id}, process: {process_name}")
 
-                # Clear form
+                # Clear form and edit mode
                 st.session_state['scanned_battery_id'] = ''
+                if 'edit_mode' in st.session_state:
+                    del st.session_state['edit_mode']
                 for key in list(st.session_state.keys()):
                     if key.startswith('check_'):
                         del st.session_state[key]
@@ -1216,61 +1298,185 @@ def render_data_entry_tab():
 def render_qr_generator_tab():
     """Render QR Code Generator tab."""
     st.markdown("## QR Code Generator")
-    st.caption("Generate QR codes for battery pack identification")
+    st.caption("Generate and download QR codes for battery pack identification")
 
-    st.markdown("---")
+    # Add tabs for Generate and View Saved
+    tab1, tab2 = st.tabs(["Generate New QR Code", "Saved QR Codes"])
 
-    battery_pack_id = st.text_input(
-        "Battery Pack ID",
-        placeholder="Enter battery pack identifier",
-        key="qr_battery_id"
-    )
+    with tab1:
+        st.markdown("### Create New QR Code")
 
-    col_a, col_b = st.columns(2)
-    with col_a:
-        size = st.selectbox("QR Code Size (px)", options=[200, 300, 400, 500], index=1, key="qr_size")
-    with col_b:
-        include_label = st.checkbox("Include Text Label", value=True, key="qr_label")
-
-    if st.button("Generate QR Code", type="primary", use_container_width=True):
-        if not battery_pack_id:
-            st.error("Please enter a Battery Pack ID")
-        else:
-            # Check if battery ID already exists
-            exists_info = check_battery_exists(battery_pack_id)
-
-            if exists_info['qr_exists'] or exists_info['data_exists']:
-                st.warning(f"""
-                **Battery Pack ID Already Exists**
-
-                - QR Code exists: {'Yes' if exists_info['qr_exists'] else 'No'}
-                - Data exists: {'Yes' if exists_info['data_exists'] else 'No'}
-
-                This battery pack ID is already in use. Each battery must have a unique ID.
-                Please use a different ID or check existing records.
-                """)
-            else:
-                try:
-                    qr_bytes = generate_qr_code(battery_pack_id, size=size, include_label=include_label)
-                    st.session_state['qr_image'] = qr_bytes
-                    st.session_state['qr_pack_id'] = battery_pack_id
-                    st.success(f"QR code generated and saved for {battery_pack_id}")
-                    st.info(f"Saved to: qr_codes/{battery_pack_id}.png")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Generation failed: {str(e)}")
-
-    if 'qr_image' in st.session_state:
-        st.markdown("---")
-        st.markdown("### Generated QR Code")
-        st.image(st.session_state['qr_image'], use_column_width=True)
-        st.download_button(
-            label="Download QR Code",
-            data=st.session_state['qr_image'],
-            file_name=f"{st.session_state['qr_pack_id']}.png",
-            mime="image/png",
-            use_container_width=True
+        battery_pack_id = st.text_input(
+            "Battery Pack ID",
+            placeholder="Enter battery pack identifier",
+            key="qr_battery_id"
         )
+
+        col_a, col_b = st.columns(2)
+        with col_a:
+            size = st.selectbox("QR Code Size (px)", options=[200, 300, 400, 500], index=1, key="qr_size")
+        with col_b:
+            include_label = st.checkbox("Include Text Label", value=True, key="qr_label")
+
+        if st.button("Generate QR Code", type="primary", use_container_width=True):
+            if not battery_pack_id:
+                st.error("Please enter a Battery Pack ID")
+            else:
+                # Check if battery ID already exists
+                exists_info = check_battery_exists(battery_pack_id)
+
+                if exists_info['qr_exists'] or exists_info['data_exists']:
+                    st.warning(f"""
+                    **Battery Pack ID Already Exists**
+
+                    - QR Code exists: {'Yes' if exists_info['qr_exists'] else 'No'}
+                    - Data exists: {'Yes' if exists_info['data_exists'] else 'No'}
+
+                    This battery pack ID is already in use. Each battery must have a unique ID.
+                    Please use a different ID or check existing records.
+                    """)
+                else:
+                    try:
+                        qr_bytes = generate_qr_code(battery_pack_id, size=size, include_label=include_label)
+                        st.session_state['qr_image'] = qr_bytes
+                        st.session_state['qr_pack_id'] = battery_pack_id
+                        st.success(f"QR code generated and saved for {battery_pack_id}")
+                        st.info(f"Saved to: qr_codes/{battery_pack_id}.png")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Generation failed: {str(e)}")
+
+        if 'qr_image' in st.session_state:
+            st.markdown("---")
+            st.markdown("### Generated QR Code")
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                st.image(st.session_state['qr_image'], use_column_width=True)
+            st.download_button(
+                label="Download QR Code",
+                data=st.session_state['qr_image'],
+                file_name=f"{st.session_state['qr_pack_id']}.png",
+                mime="image/png",
+                use_container_width=True,
+                type="primary"
+            )
+
+    with tab2:
+        st.markdown("### Saved QR Codes")
+
+        try:
+            from pathlib import Path
+            import os
+
+            qr_dir = Path("qr_codes")
+            if not qr_dir.exists():
+                st.info("No QR codes generated yet. Use the 'Generate New QR Code' tab to create one.")
+            else:
+                # Get all QR code files
+                qr_files = sorted(qr_dir.glob("*.png"), key=os.path.getmtime, reverse=True)
+
+                if not qr_files:
+                    st.info("No QR codes generated yet. Use the 'Generate New QR Code' tab to create one.")
+                else:
+                    st.markdown("---")
+
+                    # Search and Filter (same format as Reports tab)
+                    col_search, col_sort = st.columns([3, 1])
+
+                    with col_search:
+                        search_term = st.text_input(
+                            "Search QR Codes",
+                            placeholder="Enter battery pack ID to search",
+                            key="qr_search"
+                        )
+
+                    with col_sort:
+                        sort_order = st.selectbox(
+                            "Sort By",
+                            options=["Newest First", "Oldest First", "Name A-Z", "Name Z-A"],
+                            key="sort_qr"
+                        )
+
+                    # Filter files based on search
+                    if search_term:
+                        filtered_files = [f for f in qr_files if search_term.lower() in f.stem.lower()]
+                    else:
+                        filtered_files = qr_files
+
+                    # Sort files
+                    if sort_order == "Name A-Z":
+                        filtered_files = sorted(filtered_files, key=lambda x: x.stem)
+                    elif sort_order == "Name Z-A":
+                        filtered_files = sorted(filtered_files, key=lambda x: x.stem, reverse=True)
+                    elif sort_order == "Oldest First":
+                        filtered_files = sorted(filtered_files, key=os.path.getmtime)
+                    else:  # Newest First
+                        filtered_files = sorted(filtered_files, key=os.path.getmtime, reverse=True)
+
+                    st.caption(f"Showing {len(filtered_files)} of {len(qr_files)} QR codes")
+
+                    st.markdown("---")
+
+                    # Display QR codes in list format (same as Reports tab)
+                    for qr_file in filtered_files:
+                        pack_id = qr_file.stem
+                        col1, col2 = st.columns([4, 1])
+
+                        with col1:
+                            st.markdown(f"**{pack_id}**")
+                            file_size = qr_file.stat().st_size / 1024
+                            st.caption(f"Size: {file_size:.1f} KB | File: qr_codes/{pack_id}.png")
+
+                        with col2:
+                            # Read file for download
+                            with open(qr_file, 'rb') as f:
+                                qr_data = f.read()
+
+                            st.download_button(
+                                label="Download File",
+                                data=qr_data,
+                                file_name=f"{pack_id}.png",
+                                mime="image/png",
+                                use_container_width=True,
+                                key=f"download_qr_{pack_id}"
+                            )
+
+                        st.markdown('<hr style="margin: 0.5rem 0;">', unsafe_allow_html=True)
+
+                    st.markdown("---")
+
+                    # Bulk Actions (same format as Reports tab)
+                    st.markdown("### Bulk Actions")
+
+                    if st.button("Download All QR Codes as ZIP", use_container_width=True):
+                        try:
+                            import zipfile
+                            from io import BytesIO
+                            from datetime import datetime
+
+                            # Create ZIP file in memory
+                            zip_buffer = BytesIO()
+                            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                                for qr_file in filtered_files:
+                                    zip_file.write(qr_file, qr_file.name)
+
+                            zip_buffer.seek(0)
+                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+                            st.download_button(
+                                label=f"Download ZIP File ({len(filtered_files)} files)",
+                                data=zip_buffer.getvalue(),
+                                file_name=f"QR_Codes_{timestamp}.zip",
+                                mime="application/zip",
+                                use_container_width=True,
+                                type="primary"
+                            )
+                        except Exception as e:
+                            st.error(f"Failed to create ZIP: {str(e)}")
+
+        except Exception as e:
+            st.error(f"Error loading QR codes: {str(e)}")
+            logger.error(f"QR gallery error: {e}")
 
 
 # ============================================================================

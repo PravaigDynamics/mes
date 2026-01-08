@@ -8,6 +8,30 @@ font = "sans serif"
 [server]
 headless = true
 port = 8501
+# CRITICAL: Allow connections from any network interface (not just localhost)
+address = "0.0.0.0"
 enableCORS = false
 enableXsrfProtection = true
 maxUploadSize = 200
+
+# Enable file watcher for better performance with concurrent users
+fileWatcherType = "auto"
+
+# Increase max message size for large data transfers
+maxMessageSize = 200
+
+# Configure for multi-user environment
+[browser]
+gatherUsageStats = false
+# Server address users will use to access the app
+serverAddress = "192.168.0.237"
+serverPort = 8501
+
+# Runner configuration for better concurrent performance
+[runner]
+# Increase timeout for long-running operations
+scriptRunTimeout = 600
+# Enable fast reruns
+fastReruns = true
+# Enforce serialization for concurrent safety
+enforceSerializableSessionState = false
