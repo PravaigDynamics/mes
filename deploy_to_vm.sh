@@ -89,8 +89,8 @@ echo -e "${GREEN}Step 9: Configuring firewall...${NC}"
 # Check if ufw is installed
 if command -v ufw &> /dev/null; then
     echo "Configuring UFW firewall..."
-    sudo ufw allow 8501/tcp comment 'Battery Pack MES'
-    echo "Firewall rule added for port 8501"
+    sudo ufw allow 80/tcp comment 'Battery Pack MES'
+    echo "Firewall rule added for port 80"
 else
     echo "UFW not installed, skipping firewall configuration"
 fi
@@ -109,7 +109,7 @@ Type=simple
 User=$VM_USER
 WorkingDirectory=$APP_DIR
 Environment="PATH=$APP_DIR/venv/bin:/usr/local/bin:/usr/bin:/bin"
-ExecStart=$APP_DIR/venv/bin/streamlit run app_unified_db.py --server.port 8501 --server.address 0.0.0.0 --server.headless true
+ExecStart=$APP_DIR/venv/bin/streamlit run app_unified_db.py --server.port 80 --server.address 0.0.0.0 --server.headless true
 Restart=always
 RestartSec=10
 StandardOutput=journal
@@ -139,7 +139,7 @@ echo "Application Information:"
 echo "  - Service Name: battery-mes"
 echo "  - Installation Directory: $APP_DIR"
 echo "  - Database: $APP_DIR/battery_mes.db"
-echo "  - Access URL: http://192.168.0.237:8501"
+echo "  - Access URL: http://192.168.0.237:80"
 echo ""
 echo "Service Management Commands:"
 echo "  - Check status: sudo systemctl status battery-mes"
@@ -149,8 +149,8 @@ echo "  - Restart service: sudo systemctl restart battery-mes"
 echo "  - View logs: sudo journalctl -u battery-mes -f"
 echo ""
 echo "Testing:"
-echo "  - From VM: curl http://localhost:8501"
-echo "  - From network: http://192.168.0.237:8501"
+echo "  - From VM: curl http://localhost:80"
+echo "  - From network: http://192.168.0.237:80"
 echo ""
 echo -e "${YELLOW}Please test the application and verify concurrent access!${NC}"
 echo ""

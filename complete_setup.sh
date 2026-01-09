@@ -33,7 +33,7 @@ Type=simple
 User=giritharan
 WorkingDirectory=/home/giritharan/MES
 Environment="PATH=/home/giritharan/MES/venv/bin:/usr/local/bin:/usr/bin:/bin"
-ExecStart=/home/giritharan/MES/venv/bin/streamlit run app_unified_db.py --server.port 8501 --server.address 0.0.0.0 --server.headless true
+ExecStart=/home/giritharan/MES/venv/bin/streamlit run app_unified_db.py --server.port 80 --server.address 0.0.0.0 --server.headless true
 Restart=always
 RestartSec=10
 StandardOutput=journal
@@ -50,7 +50,7 @@ echo ""
 echo "Step 3: Configuring firewall..."
 if command -v ufw &> /dev/null; then
     echo "UFW detected, adding firewall rule..."
-    sudo ufw allow 8501/tcp comment 'Battery Pack MES'
+    sudo ufw allow 80/tcp comment 'Battery Pack MES'
     echo "Firewall rule added"
 else
     echo "UFW not installed, skipping firewall configuration"
@@ -85,7 +85,7 @@ echo "Setup Complete!"
 echo "==========================================="
 echo ""
 echo "Application Information:"
-echo "  - Access URL: http://192.168.0.237:8501"
+echo "  - Access URL: http://192.168.0.237:80"
 echo "  - Service Name: battery-mes"
 echo "  - Status: Active"
 echo ""
@@ -97,7 +97,7 @@ echo "  - Restart: sudo systemctl restart battery-mes"
 echo "  - Logs:    sudo journalctl -u battery-mes -f"
 echo ""
 echo "Next Steps:"
-echo "  1. Open browser to: http://192.168.0.237:8501"
+echo "  1. Open browser to: http://192.168.0.237:80"
 echo "  2. Test creating QR codes"
 echo "  3. Test data entry with multiple users"
 echo "  4. Verify concurrent access works"
