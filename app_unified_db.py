@@ -233,8 +233,8 @@ def generate_qr_code(battery_pack_id: str, size: int = 300, include_label: bool 
             border=4,
         )
 
-        # Generate URL or direct ID (HTTPS on port 8443 for camera support)
-        data = f"https://192.168.0.237:8443/entry/{battery_pack_id}"
+        # Generate URL or direct ID (HTTPS with domain for camera support)
+        data = f"https://mes.pravaig.com/entry/{battery_pack_id}"
         qr.add_data(data)
         qr.make(fit=True)
 
