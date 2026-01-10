@@ -771,41 +771,121 @@ def render_data_entry_tab():
     st.markdown("### Battery Pack Identification")
 
     # Only show method selection if no scanner is currently open
-    if not st.session_state.get('photo_upload_open', False) and not st.session_state.get('camera_scanner_open', False):
-        # Two scanning methods side by side
-        col1, col2 = st.columns(2)
+    if not st.session_state.get('photo_upload_open', False) and not st.session_state.get('camera_scanner_open', False) and not st.session_state.get('barcode_scanner_open', False):
+        # Three scanning methods - Barcode Scanner prioritized
+        col1, col2, col3 = st.columns(3)
 
         with col1:
             st.markdown("""
-            <div class="method-card secondary">
-                <div class="method-title">Photo Upload</div>
+            <div class="method-card primary">
+                <div class="method-title">🔍 Barcode Scanner</div>
                 <div class="method-description">
-                    Recommended for all devices<br/>
-                    Works on HTTP and HTTPS
+                    USB/Wireless Scanner<br/>
+                    <strong>Recommended for Desktop</strong>
                 </div>
             </div>
             """, unsafe_allow_html=True)
 
-            if st.button("Upload QR Code Photo", key="open_upload", use_container_width=True, type="primary"):
-                st.session_state['photo_upload_open'] = True
+            if st.button("Use Barcode Scanner", key="open_barcode", use_container_width=True, type="primary"):
+                st.session_state['barcode_scanner_open'] = True
+                st.session_state['photo_upload_open'] = False
                 st.session_state['camera_scanner_open'] = False
                 st.rerun()
 
         with col2:
             st.markdown("""
-            <div class="method-card primary">
-                <div class="method-title">Live Camera</div>
+            <div class="method-card secondary">
+                <div class="method-title">📸 Photo Upload</div>
                 <div class="method-description">
-                    Direct scanning<br/>
-                    Requires HTTPS or localhost
+                    Upload QR image<br/>
+                    Works on all devices
                 </div>
             </div>
             """, unsafe_allow_html=True)
 
-            if st.button("Open Camera Scanner", key="open_camera", use_container_width=True, type="primary"):
+            if st.button("Upload QR Code Photo", key="open_upload", use_container_width=True):
+                st.session_state['photo_upload_open'] = True
+                st.session_state['camera_scanner_open'] = False
+                st.session_state['barcode_scanner_open'] = False
+                st.rerun()
+
+        with col3:
+            st.markdown("""
+            <div class="method-card secondary">
+                <div class="method-title">📷 Live Camera</div>
+                <div class="method-description">
+                    Direct scanning<br/>
+                    Requires HTTPS
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            if st.button("Open Camera Scanner", key="open_camera", use_container_width=True):
                 st.session_state['camera_scanner_open'] = True
                 st.session_state['photo_upload_open'] = False
+                st.session_state['barcode_scanner_open'] = False
                 st.rerun()
+
+    # Barcode Scanner Input (Priority Method)
+    if st.session_state.get('barcode_scanner_open', False):
+        st.markdown("---")
+        st.markdown("### Barcode Scanner Input")
+
+        st.markdown("""
+        <div class="alert alert-info">
+            <strong>Instructions:</strong> Click in the input field below, then scan the QR code with your barcode scanner.
+            The battery ID will be automatically detected when you scan.
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Create a form to handle Enter key submission
+        with st.form(key="barcode_scanner_form", clear_on_submit=True):
+            scanner_input = st.text_input(
+                "Scan QR Code",
+                key="scanner_input_field",
+                placeholder="Click here and scan with your barcode scanner...",
+                help="Position cursor here and scan with USB/wireless barcode scanner",
+                label_visibility="visible"
+            )
+
+            # Auto-submit JavaScript to handle scanner input
+            st.markdown("""
+            <script>
+                // Auto-focus the scanner input field
+                setTimeout(function() {
+                    const inputs = window.parent.document.querySelectorAll('input[aria-label="Scan QR Code"]');
+                    if (inputs.length > 0) {
+                        inputs[0].focus();
+                        inputs[0].select();
+                    }
+                }, 100);
+            </script>
+            """, unsafe_allow_html=True)
+
+            submitted = st.form_submit_button("Submit Scan", use_container_width=True)
+
+            if submitted and scanner_input:
+                # Extract battery ID from scanned data
+                battery_id = extract_battery_id_from_url(scanner_input) if scanner_input.startswith('http') else scanner_input.strip()
+
+                if battery_id:
+                    st.markdown(f"""
+                    <div class="alert alert-success">
+                        <strong>Scanner Detected!</strong><br/>
+                        <span style="font-size: 1.75rem; font-weight: 700; display: block; margin: 0.5rem 0;">{battery_id}</span>
+                        <span style="font-size: 0.875rem; opacity: 0.8;">Proceeding to data entry...</span>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    st.session_state['scanned_battery_id'] = battery_id
+                    st.session_state['barcode_scanner_open'] = False
+                    st.rerun()
+                else:
+                    st.error("Invalid scan. Please try again.")
+
+        if st.button("Cancel Scanner", key="close_barcode"):
+            st.session_state['barcode_scanner_open'] = False
+            st.rerun()
 
     # Photo Upload Scanner
     if st.session_state.get('photo_upload_open', False):
@@ -955,7 +1035,7 @@ def render_data_entry_tab():
     battery_pack_id = st.session_state.get('scanned_battery_id', '')
 
     # Only show manual entry if no scanning interface is open and no ID is set
-    if not battery_pack_id and not st.session_state.get('photo_upload_open', False) and not st.session_state.get('camera_scanner_open', False):
+    if not battery_pack_id and not st.session_state.get('photo_upload_open', False) and not st.session_state.get('camera_scanner_open', False) and not st.session_state.get('barcode_scanner_open', False):
         st.markdown("---")
         with st.expander("Manual Entry"):
             st.caption("Enter Battery Pack ID manually if scanning is unavailable")
@@ -1001,6 +1081,7 @@ def render_data_entry_tab():
         st.session_state['scanned_battery_id'] = ''
         st.session_state['photo_upload_open'] = False
         st.session_state['camera_scanner_open'] = False
+        st.session_state['barcode_scanner_open'] = False
         st.rerun()
 
     st.markdown("---")
@@ -1279,6 +1360,9 @@ def render_data_entry_tab():
 
                 # Clear form and edit mode
                 st.session_state['scanned_battery_id'] = ''
+                st.session_state['photo_upload_open'] = False
+                st.session_state['camera_scanner_open'] = False
+                st.session_state['barcode_scanner_open'] = False
                 if 'edit_mode' in st.session_state:
                     del st.session_state['edit_mode']
                 for key in list(st.session_state.keys()):
