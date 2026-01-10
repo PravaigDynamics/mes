@@ -1572,8 +1572,28 @@ def render_dashboard_tab():
     st.markdown("## Production Dashboard")
     st.caption("Battery Pack Tracker and Production Analytics")
 
-    # Add refresh button
-    col_title, col_refresh = st.columns([6, 1])
+    # Add target configuration and refresh button
+    col_target, col_spacer, col_refresh = st.columns([2, 4, 1])
+
+    with col_target:
+        # Initialize target in session state if not exists
+        if 'production_target' not in st.session_state:
+            st.session_state['production_target'] = 50
+
+        target_packs = st.number_input(
+            "🎯 Target Packs",
+            min_value=1,
+            max_value=1000,
+            value=st.session_state['production_target'],
+            step=1,
+            key="target_input",
+            help="Set the production target for tracking"
+        )
+
+        # Update session state if value changed
+        if target_packs != st.session_state['production_target']:
+            st.session_state['production_target'] = target_packs
+
     with col_refresh:
         if st.button("🔄 Refresh", key="refresh_dashboard", type="primary", use_container_width=True):
             st.rerun()
@@ -1690,7 +1710,8 @@ def render_dashboard_tab():
 
         # Calculate metrics
         total_packs = len(all_packs)
-        target_packs = 50  # This could be configured
+        # Use target from user input (already defined above)
+        target_packs = st.session_state.get('production_target', 50)
 
         # Count packs by status
         completed_packs = sum(1 for row in tracker_data if row.get("Status") == "Ready to dispatch")
