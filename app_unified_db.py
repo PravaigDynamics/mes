@@ -838,39 +838,35 @@ def render_data_entry_tab():
         </div>
         """, unsafe_allow_html=True)
 
-        # Check if we have scanned data to process (set by JavaScript)
-        if st.session_state.get('scanner_submit_trigger', False):
-            scanner_data = st.session_state.get('scanner_input_auto', '')
-            if scanner_data:
+        # Use form for reliable auto-submit
+        with st.form(key="barcode_scanner_auto_form", clear_on_submit=True):
+            scanner_input = st.text_input(
+                "Scanning...",
+                key="scanner_input_field",
+                placeholder="Waiting for scan...",
+                label_visibility="collapsed"
+            )
+
+            # Hidden submit button (will be auto-clicked by JavaScript)
+            submitted = st.form_submit_button("🔄", help="Auto-submit (hidden)")
+
+            if submitted and scanner_input:
                 # Extract battery ID from scanned data
-                battery_id = extract_battery_id_from_url(scanner_data) if scanner_data.startswith('http') else scanner_data.strip()
+                battery_id = extract_battery_id_from_url(scanner_input) if scanner_input.startswith('http') else scanner_input.strip()
 
                 if battery_id:
                     st.session_state['scanned_battery_id'] = battery_id
                     st.session_state['barcode_scanner_open'] = False
-                    st.session_state['scanner_input_auto'] = ''
-                    st.session_state['scanner_submit_trigger'] = False
                     st.rerun()
 
-        # Reset trigger flag
-        st.session_state['scanner_submit_trigger'] = False
-
-        # Hidden text input field (for JavaScript to populate)
-        scanner_input = st.text_input(
-            "Scanning...",
-            key="scanner_input_auto",
-            placeholder="Waiting for scan...",
-            label_visibility="collapsed"
-        )
-
-        # JavaScript for auto-focus and automatic submission after typing stops
+        # JavaScript for auto-focus and automatic form submission
         st.markdown("""
         <script>
             (function() {
                 let debounceTimer;
-                const DEBOUNCE_DELAY = 300; // 300ms after scanner stops typing
+                const DEBOUNCE_DELAY = 200; // 200ms after scanner stops typing
 
-                setTimeout(function() {
+                function findAndSetup() {
                     const inputs = window.parent.document.querySelectorAll('input[placeholder*="Waiting for scan"]');
                     if (inputs.length > 0) {
                         const inputField = inputs[0];
@@ -878,6 +874,10 @@ def render_data_entry_tab():
                         // Auto-focus immediately
                         inputField.focus();
                         inputField.select();
+
+                        // Remove existing listener if any
+                        if (inputField.hasAutoSubmit) return;
+                        inputField.hasAutoSubmit = true;
 
                         // Monitor input changes - auto-submit when scanner stops typing
                         inputField.addEventListener('input', function(event) {
@@ -890,15 +890,22 @@ def render_data_entry_tab():
                             if (value.length > 10) {  // QR codes/URLs are longer than 10 chars
                                 // Set timer - if no more typing after DEBOUNCE_DELAY, auto-submit
                                 debounceTimer = setTimeout(() => {
-                                    // Trigger submission automatically
-                                    inputField.blur();
+                                    console.log('Auto-submitting scanned data:', value.substring(0, 30) + '...');
 
-                                    setTimeout(() => {
-                                        const buttons = window.parent.document.querySelectorAll('button[data-testid="baseButton-secondary"]');
-                                        if (buttons.length > 0) {
-                                            buttons[0].click();
+                                    // Find and click the submit button
+                                    const submitButtons = window.parent.document.querySelectorAll('button[kind="formSubmit"]');
+                                    if (submitButtons.length > 0) {
+                                        submitButtons[submitButtons.length - 1].click();
+                                    } else {
+                                        // Fallback: try to find by text content
+                                        const allButtons = window.parent.document.querySelectorAll('button');
+                                        for (let btn of allButtons) {
+                                            if (btn.textContent.includes('🔄')) {
+                                                btn.click();
+                                                break;
+                                            }
                                         }
-                                    }, 100);
+                                    }
                                 }, DEBOUNCE_DELAY);
                             }
                         });
@@ -912,23 +919,21 @@ def render_data_entry_tab():
                             }, 50);
                         });
                     }
-                }, 100);
+                }
+
+                // Try multiple times to ensure field is found
+                setTimeout(findAndSetup, 100);
+                setTimeout(findAndSetup, 300);
+                setTimeout(findAndSetup, 500);
             })();
         </script>
         """, unsafe_allow_html=True)
 
-        # Hidden auto-submit button (clicked by JavaScript)
-        if st.button("", key="auto_submit_hidden", use_container_width=False, type="secondary"):
-            st.session_state['scanner_submit_trigger'] = True
-            st.rerun()
-
-        # Cancel button only
+        # Cancel button
         col1, col2 = st.columns([4, 1])
         with col2:
             if st.button("Cancel", key="close_barcode", use_container_width=True):
                 st.session_state['barcode_scanner_open'] = False
-                st.session_state['scanner_input_auto'] = ''
-                st.session_state['scanner_submit_trigger'] = False
                 st.rerun()
 
     # Photo Upload Scanner
