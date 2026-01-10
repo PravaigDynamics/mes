@@ -24,8 +24,8 @@ maxMessageSize = 200
 [browser]
 gatherUsageStats = false
 # Server address users will use to access the app
-serverAddress = "192.168.0.237"
-serverPort = 8501
+serverAddress = "mes.pravaig.com"
+serverPort = 443
 
 # Runner configuration for better concurrent performance
 [runner]

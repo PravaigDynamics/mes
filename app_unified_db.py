@@ -11,6 +11,7 @@ MODIFIED VERSION - Uses Database + Excel Export
 
 import sys
 import io
+import os
 import time
 import logging
 from pathlib import Path
@@ -233,8 +234,9 @@ def generate_qr_code(battery_pack_id: str, size: int = 300, include_label: bool 
             border=4,
         )
 
-        # Generate URL or direct ID (HTTPS with domain for camera support)
-        data = f"https://mes.pravaig.com/entry/{battery_pack_id}"
+        # Generate URL from environment variable (HTTPS with domain for camera support)
+        base_url = os.getenv('APP_BASE_URL', 'https://mes.pravaig.com')
+        data = f"{base_url}/entry/{battery_pack_id}"
         qr.add_data(data)
         qr.make(fit=True)
 
