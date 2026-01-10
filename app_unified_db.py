@@ -826,66 +826,80 @@ def render_data_entry_tab():
                 st.session_state['barcode_scanner_open'] = False
                 st.rerun()
 
-    # Barcode Scanner Input (Priority Method)
+    # Barcode Scanner Input (Priority Method) - AUTO-SUBMIT
     if st.session_state.get('barcode_scanner_open', False):
         st.markdown("---")
-        st.markdown("### Barcode Scanner Input")
+        st.markdown("### Barcode Scanner Ready")
 
         st.markdown("""
-        <div class="alert alert-info">
-            <strong>Instructions:</strong> Click in the input field below, then scan the QR code with your barcode scanner.
-            The battery ID will be automatically detected when you scan.
+        <div class="alert alert-success">
+            <strong>✓ Scanner Active</strong><br/>
+            Simply scan the QR code with your barcode scanner now.
+            The battery ID will be detected automatically - no clicking needed!
         </div>
         """, unsafe_allow_html=True)
 
-        # Create a form to handle Enter key submission
-        with st.form(key="barcode_scanner_form", clear_on_submit=True):
-            scanner_input = st.text_input(
-                "Scan QR Code",
-                key="scanner_input_field",
-                placeholder="Click here and scan with your barcode scanner...",
-                help="Position cursor here and scan with USB/wireless barcode scanner",
-                label_visibility="visible"
-            )
-
-            # Auto-submit JavaScript to handle scanner input
-            st.markdown("""
-            <script>
-                // Auto-focus the scanner input field
-                setTimeout(function() {
-                    const inputs = window.parent.document.querySelectorAll('input[aria-label="Scan QR Code"]');
-                    if (inputs.length > 0) {
-                        inputs[0].focus();
-                        inputs[0].select();
-                    }
-                }, 100);
-            </script>
-            """, unsafe_allow_html=True)
-
-            submitted = st.form_submit_button("Submit Scan", use_container_width=True)
-
-            if submitted and scanner_input:
+        # Auto-submit callback function
+        def on_scanner_input():
+            scanner_data = st.session_state.get('scanner_input_auto', '')
+            if scanner_data:
                 # Extract battery ID from scanned data
-                battery_id = extract_battery_id_from_url(scanner_input) if scanner_input.startswith('http') else scanner_input.strip()
+                battery_id = extract_battery_id_from_url(scanner_data) if scanner_data.startswith('http') else scanner_data.strip()
 
                 if battery_id:
-                    st.markdown(f"""
-                    <div class="alert alert-success">
-                        <strong>Scanner Detected!</strong><br/>
-                        <span style="font-size: 1.75rem; font-weight: 700; display: block; margin: 0.5rem 0;">{battery_id}</span>
-                        <span style="font-size: 0.875rem; opacity: 0.8;">Proceeding to data entry...</span>
-                    </div>
-                    """, unsafe_allow_html=True)
-
                     st.session_state['scanned_battery_id'] = battery_id
                     st.session_state['barcode_scanner_open'] = False
-                    st.rerun()
-                else:
-                    st.error("Invalid scan. Please try again.")
+                    st.session_state['scanner_input_auto'] = ''  # Clear for next scan
 
-        if st.button("Cancel Scanner", key="close_barcode"):
-            st.session_state['barcode_scanner_open'] = False
-            st.rerun()
+        # Text input with auto-submit on change
+        scanner_input = st.text_input(
+            "Ready to Scan",
+            key="scanner_input_auto",
+            placeholder="Field is ready - just scan now...",
+            help="Auto-focused and ready for barcode scanner input",
+            label_visibility="visible",
+            on_change=on_scanner_input
+        )
+
+        # Auto-focus JavaScript
+        st.markdown("""
+        <script>
+            // Auto-focus the scanner input field immediately
+            setTimeout(function() {
+                const inputs = window.parent.document.querySelectorAll('input[placeholder*="just scan now"]');
+                if (inputs.length > 0) {
+                    inputs[0].focus();
+                    inputs[0].select();
+
+                    // Re-focus after any blur (scanner might cause blur)
+                    inputs[0].addEventListener('blur', function() {
+                        setTimeout(() => {
+                            if (document.activeElement !== inputs[0]) {
+                                inputs[0].focus();
+                            }
+                        }, 50);
+                    });
+                }
+            }, 100);
+
+            // Also try to focus on page load
+            window.addEventListener('load', function() {
+                setTimeout(function() {
+                    const inputs = window.parent.document.querySelectorAll('input[placeholder*="just scan now"]');
+                    if (inputs.length > 0) {
+                        inputs[0].focus();
+                    }
+                }, 200);
+            });
+        </script>
+        """, unsafe_allow_html=True)
+
+        col1, col2 = st.columns([3, 1])
+        with col2:
+            if st.button("Cancel", key="close_barcode", use_container_width=True):
+                st.session_state['barcode_scanner_open'] = False
+                st.session_state['scanner_input_auto'] = ''
+                st.rerun()
 
     # Photo Upload Scanner
     if st.session_state.get('photo_upload_open', False):
