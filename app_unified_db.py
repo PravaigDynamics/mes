@@ -826,7 +826,7 @@ def render_data_entry_tab():
                 st.session_state['barcode_scanner_open'] = False
                 st.rerun()
 
-    # Barcode Scanner Input (Priority Method) - AUTO-SUBMIT
+    # Barcode Scanner Input (Priority Method) - AUTO-SUBMIT ON ENTER
     if st.session_state.get('barcode_scanner_open', False):
         st.markdown("---")
         st.markdown("### Barcode Scanner Ready")
@@ -834,13 +834,12 @@ def render_data_entry_tab():
         st.markdown("""
         <div class="alert alert-success">
             <strong>✓ Scanner Active</strong><br/>
-            Simply scan the QR code with your barcode scanner now.
-            The battery ID will be detected automatically - no clicking needed!
+            Scan the QR code now - it will automatically proceed when done!
         </div>
         """, unsafe_allow_html=True)
 
-        # Auto-submit callback function
-        def on_scanner_input():
+        # Check if we have scanned data to process (set by JavaScript)
+        if st.session_state.get('scanner_submit_trigger', False):
             scanner_data = st.session_state.get('scanner_input_auto', '')
             if scanner_data:
                 # Extract battery ID from scanned data
@@ -849,56 +848,80 @@ def render_data_entry_tab():
                 if battery_id:
                     st.session_state['scanned_battery_id'] = battery_id
                     st.session_state['barcode_scanner_open'] = False
-                    st.session_state['scanner_input_auto'] = ''  # Clear for next scan
+                    st.session_state['scanner_input_auto'] = ''
+                    st.session_state['scanner_submit_trigger'] = False
+                    st.rerun()
 
-        # Text input with auto-submit on change
+        # Reset trigger flag
+        st.session_state['scanner_submit_trigger'] = False
+
+        # Text input field
         scanner_input = st.text_input(
             "Ready to Scan",
             key="scanner_input_auto",
-            placeholder="Field is ready - just scan now...",
-            help="Auto-focused and ready for barcode scanner input",
-            label_visibility="visible",
-            on_change=on_scanner_input
+            placeholder="Scan now - auto-submits on Enter...",
+            help="Barcode scanner will auto-submit when it sends Enter key",
+            label_visibility="visible"
         )
 
-        # Auto-focus JavaScript
+        # JavaScript for auto-focus and Enter key detection
         st.markdown("""
         <script>
-            // Auto-focus the scanner input field immediately
             setTimeout(function() {
-                const inputs = window.parent.document.querySelectorAll('input[placeholder*="just scan now"]');
+                const inputs = window.parent.document.querySelectorAll('input[placeholder*="auto-submits on Enter"]');
                 if (inputs.length > 0) {
-                    inputs[0].focus();
-                    inputs[0].select();
+                    const inputField = inputs[0];
 
-                    // Re-focus after any blur (scanner might cause blur)
-                    inputs[0].addEventListener('blur', function() {
+                    // Auto-focus immediately
+                    inputField.focus();
+                    inputField.select();
+
+                    // Listen for Enter key (barcode scanners send Enter at the end)
+                    inputField.addEventListener('keydown', function(event) {
+                        if (event.key === 'Enter' || event.keyCode === 13) {
+                            event.preventDefault();
+
+                            // Blur to trigger Streamlit's state update
+                            inputField.blur();
+
+                            // Small delay then trigger rerun by pressing a hidden button
+                            setTimeout(() => {
+                                const buttons = window.parent.document.querySelectorAll('button[kind="secondary"]');
+                                for (let btn of buttons) {
+                                    if (btn.textContent.includes('Process Scan')) {
+                                        btn.click();
+                                        break;
+                                    }
+                                }
+                            }, 50);
+                        }
+                    });
+
+                    // Re-focus after blur (keep field focused)
+                    inputField.addEventListener('blur', function() {
                         setTimeout(() => {
-                            if (document.activeElement !== inputs[0]) {
-                                inputs[0].focus();
+                            if (!document.activeElement || document.activeElement.tagName !== 'BUTTON') {
+                                inputField.focus();
                             }
-                        }, 50);
+                        }, 100);
                     });
                 }
             }, 100);
-
-            // Also try to focus on page load
-            window.addEventListener('load', function() {
-                setTimeout(function() {
-                    const inputs = window.parent.document.querySelectorAll('input[placeholder*="just scan now"]');
-                    if (inputs.length > 0) {
-                        inputs[0].focus();
-                    }
-                }, 200);
-            });
         </script>
         """, unsafe_allow_html=True)
 
-        col1, col2 = st.columns([3, 1])
+        # Hidden button for JavaScript to trigger (sets flag and reruns)
+        col1, col2, col3 = st.columns([2, 2, 1])
         with col2:
+            if st.button("Process Scan", key="process_scan_trigger", use_container_width=True, type="secondary"):
+                st.session_state['scanner_submit_trigger'] = True
+                st.rerun()
+
+        with col3:
             if st.button("Cancel", key="close_barcode", use_container_width=True):
                 st.session_state['barcode_scanner_open'] = False
                 st.session_state['scanner_input_auto'] = ''
+                st.session_state['scanner_submit_trigger'] = False
                 st.rerun()
 
     # Photo Upload Scanner
