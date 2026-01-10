@@ -807,7 +807,7 @@ def render_data_entry_tab():
             </div>
             """, unsafe_allow_html=True)
 
-            if st.button("Upload QR Code Photo", key="open_upload", use_container_width=True):
+            if st.button("Upload QR Code Photo", key="open_upload", use_container_width=True, type="secondary"):
                 st.session_state['photo_upload_open'] = True
                 st.session_state['camera_scanner_open'] = False
                 st.session_state['barcode_scanner_open'] = False
@@ -824,7 +824,7 @@ def render_data_entry_tab():
             </div>
             """, unsafe_allow_html=True)
 
-            if st.button("Open Camera Scanner", key="open_camera", use_container_width=True):
+            if st.button("Open Camera Scanner", key="open_camera", use_container_width=True, type="secondary"):
                 st.session_state['camera_scanner_open'] = True
                 st.session_state['photo_upload_open'] = False
                 st.session_state['barcode_scanner_open'] = False
@@ -1575,7 +1575,7 @@ def render_dashboard_tab():
     # Add refresh button
     col_title, col_refresh = st.columns([6, 1])
     with col_refresh:
-        if st.button("Refresh", key="refresh_dashboard"):
+        if st.button("🔄 Refresh", key="refresh_dashboard", type="primary", use_container_width=True):
             st.rerun()
 
     try:
