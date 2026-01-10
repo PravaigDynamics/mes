@@ -24,6 +24,10 @@ import openpyxl
 import qrcode
 from PIL import Image
 import base64
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Import database and Excel generator
 from database import (
@@ -826,29 +830,36 @@ def render_data_entry_tab():
                 st.session_state['barcode_scanner_open'] = False
                 st.rerun()
 
-    # Barcode Scanner Input (Priority Method) - FULLY AUTOMATIC
+    # Barcode Scanner Input (Priority Method)
     if st.session_state.get('barcode_scanner_open', False):
         st.markdown("---")
-        st.markdown("### Barcode Scanner Ready")
+        st.markdown("### Barcode Scanner")
 
         st.markdown("""
         <div class="alert alert-success">
-            <strong>✓ Scanner Active</strong><br/>
-            Just scan the QR code - it will automatically redirect!
+            <strong>✓ Scanner Ready</strong><br/>
+            Scan the QR code and click Submit
         </div>
         """, unsafe_allow_html=True)
 
-        # Use form for reliable auto-submit
-        with st.form(key="barcode_scanner_auto_form", clear_on_submit=True):
+        # Simple form with submit button
+        with st.form(key="barcode_scanner_form", clear_on_submit=True):
             scanner_input = st.text_input(
-                "Scanning...",
+                "Scan QR Code",
                 key="scanner_input_field",
-                placeholder="Waiting for scan...",
-                label_visibility="collapsed"
+                placeholder="Click here and scan...",
+                help="Click in this field and scan the QR code with your barcode scanner"
             )
 
-            # Hidden submit button (will be auto-clicked by JavaScript)
-            submitted = st.form_submit_button("🔄", help="Auto-submit (hidden)")
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                submitted = st.form_submit_button("Submit Scan", use_container_width=True, type="primary")
+            with col2:
+                cancel = st.form_submit_button("Cancel", use_container_width=True)
+
+            if cancel:
+                st.session_state['barcode_scanner_open'] = False
+                st.rerun()
 
             if submitted and scanner_input:
                 # Extract battery ID from scanned data
@@ -858,83 +869,21 @@ def render_data_entry_tab():
                     st.session_state['scanned_battery_id'] = battery_id
                     st.session_state['barcode_scanner_open'] = False
                     st.rerun()
+                else:
+                    st.error("Invalid QR code data. Please scan again.")
 
-        # JavaScript for auto-focus and automatic form submission
+        # Auto-focus JavaScript (simpler version)
         st.markdown("""
         <script>
-            (function() {
-                let debounceTimer;
-                const DEBOUNCE_DELAY = 200; // 200ms after scanner stops typing
-
-                function findAndSetup() {
-                    const inputs = window.parent.document.querySelectorAll('input[placeholder*="Waiting for scan"]');
-                    if (inputs.length > 0) {
-                        const inputField = inputs[0];
-
-                        // Auto-focus immediately
-                        inputField.focus();
-                        inputField.select();
-
-                        // Remove existing listener if any
-                        if (inputField.hasAutoSubmit) return;
-                        inputField.hasAutoSubmit = true;
-
-                        // Monitor input changes - auto-submit when scanner stops typing
-                        inputField.addEventListener('input', function(event) {
-                            const value = inputField.value.trim();
-
-                            // Clear any existing timer
-                            clearTimeout(debounceTimer);
-
-                            // Only process if we have data
-                            if (value.length > 10) {  // QR codes/URLs are longer than 10 chars
-                                // Set timer - if no more typing after DEBOUNCE_DELAY, auto-submit
-                                debounceTimer = setTimeout(() => {
-                                    console.log('Auto-submitting scanned data:', value.substring(0, 30) + '...');
-
-                                    // Find and click the submit button
-                                    const submitButtons = window.parent.document.querySelectorAll('button[kind="formSubmit"]');
-                                    if (submitButtons.length > 0) {
-                                        submitButtons[submitButtons.length - 1].click();
-                                    } else {
-                                        // Fallback: try to find by text content
-                                        const allButtons = window.parent.document.querySelectorAll('button');
-                                        for (let btn of allButtons) {
-                                            if (btn.textContent.includes('🔄')) {
-                                                btn.click();
-                                                break;
-                                            }
-                                        }
-                                    }
-                                }, DEBOUNCE_DELAY);
-                            }
-                        });
-
-                        // Keep field focused
-                        inputField.addEventListener('blur', function() {
-                            setTimeout(() => {
-                                if (!document.activeElement || document.activeElement.tagName !== 'BUTTON') {
-                                    inputField.focus();
-                                }
-                            }, 50);
-                        });
-                    }
+            setTimeout(function() {
+                const inputs = window.parent.document.querySelectorAll('input[placeholder*="Click here and scan"]');
+                if (inputs.length > 0) {
+                    inputs[0].focus();
+                    inputs[0].select();
                 }
-
-                // Try multiple times to ensure field is found
-                setTimeout(findAndSetup, 100);
-                setTimeout(findAndSetup, 300);
-                setTimeout(findAndSetup, 500);
-            })();
+            }, 100);
         </script>
         """, unsafe_allow_html=True)
-
-        # Cancel button
-        col1, col2 = st.columns([4, 1])
-        with col2:
-            if st.button("Cancel", key="close_barcode", use_container_width=True):
-                st.session_state['barcode_scanner_open'] = False
-                st.rerun()
 
     # Photo Upload Scanner
     if st.session_state.get('photo_upload_open', False):
