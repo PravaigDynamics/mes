@@ -1819,10 +1819,48 @@ def render_reports_tab():
             st.info("No reports found. sample.xlsx not found.")
             return
 
-        # Load workbook to get sheet names
-        wb = openpyxl.load_workbook(master_file, read_only=True)
-        battery_sheets = [sheet for sheet in wb.sheetnames[1:]]  # Skip template
-        wb.close()
+        # Load workbook to get sheet names (with error handling for corrupted files)
+        try:
+            wb = openpyxl.load_workbook(master_file, read_only=True)
+            battery_sheets = [sheet for sheet in wb.sheetnames[1:]]  # Skip template
+            wb.close()
+        except Exception as file_error:
+            st.error(f"The sample.xlsx file appears to be corrupted: {str(file_error)}")
+            st.warning("This can happen if the file was modified while in use or not saved properly.")
+
+            st.markdown("### Recovery Options:")
+            st.markdown("""
+            1. **If you have a backup:** Restore sample.xlsx from your backup
+            2. **To recreate from template:** Upload a fresh sample.xlsx template file
+            3. **Data is safe:** Your database records are intact - only the Excel file needs repair
+            """)
+
+            # Option to upload a fresh template
+            uploaded_file = st.file_uploader("Upload fresh sample.xlsx template", type=['xlsx'])
+            if uploaded_file is not None:
+                try:
+                    # Save the uploaded file
+                    with open(master_file, 'wb') as f:
+                        f.write(uploaded_file.getvalue())
+                    st.success("Template uploaded successfully! Please refresh the page.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Failed to save template: {str(e)}")
+
+            # Show database reports as fallback
+            st.markdown("---")
+            st.markdown("### Database Reports (Fallback)")
+            st.caption("Data from database - Excel file not required")
+
+            all_packs = get_all_battery_packs()
+            if all_packs:
+                st.info(f"Found {len(all_packs)} battery packs in database")
+                for pack_id in sorted(all_packs):
+                    st.markdown(f"- {pack_id}")
+            else:
+                st.info("No battery packs found in database")
+
+            return
 
         if not battery_sheets:
             st.info("No reports available. Generate QR codes and enter production data to create reports.")
