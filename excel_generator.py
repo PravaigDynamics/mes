@@ -10,6 +10,7 @@ from pathlib import Path
 from datetime import datetime
 import logging
 from typing import Optional
+import io
 from database import get_qc_checks, get_all_battery_packs
 
 logger = logging.getLogger(__name__)
@@ -410,3 +411,260 @@ def update_excel_after_entry(battery_pack_id: str):
 
     except Exception as e:
         logger.error(f"Error updating Excel: {e}", exc_info=True)
+
+
+# ============================================================================
+# ON-DEMAND EXCEL GENERATION (Returns bytes - no file saving)
+# These functions are for Reports tab downloads only
+# They do NOT affect the production process
+# ============================================================================
+
+def generate_battery_excel_bytes(battery_pack_id: str) -> Optional[bytes]:
+    """
+    Generate Excel for a single battery pack and return as bytes (in-memory).
+    Does NOT save to disk - for download only.
+    """
+    try:
+        # Load template
+        template_path = Path("sample.xlsx")
+        if not template_path.exists():
+            logger.error("Template sample.xlsx not found")
+            return None
+
+        wb = openpyxl.load_workbook(template_path)
+        ws = wb.worksheets[0]
+
+        # Write Battery Pack ID
+        safe_write_cell(ws, 6, 10, battery_pack_id)
+
+        # Get all QC checks for this battery pack
+        all_checks = get_qc_checks(battery_pack_id)
+
+        # Group checks by process
+        checks_by_process = {}
+        for check in all_checks:
+            process_name = check['process_name']
+            if process_name not in checks_by_process:
+                checks_by_process[process_name] = []
+            checks_by_process[process_name].append(check)
+
+        # Write data (same logic as generate_battery_excel)
+        for process_name, checks in checks_by_process.items():
+            if process_name not in PROCESS_ROW_MAPPING:
+                continue
+
+            process_info = PROCESS_ROW_MAPPING[process_name]
+            start_row = process_info["start_row"]
+            process_type = process_info["type"]
+
+            if process_type == "standard":
+                for idx, check in enumerate(checks):
+                    row = start_row + idx
+                    start_date = check.get('start_date')
+                    end_date = check.get('end_date')
+
+                    if start_date:
+                        start_date_str = start_date if isinstance(start_date, str) else start_date.strftime("%Y-%m-%d %H:%M:%S")
+                    else:
+                        start_date_str = ""
+
+                    if end_date:
+                        end_date_str = end_date if isinstance(end_date, str) else end_date.strftime("%Y-%m-%d %H:%M:%S")
+                    else:
+                        end_date_str = ""
+
+                    safe_write_cell(ws, row, 12, check.get('module_x', ''))
+                    safe_write_cell(ws, row, 13, check.get('module_y', ''))
+                    safe_write_cell(ws, row, 14, start_date_str)
+                    safe_write_cell(ws, row, 15, end_date_str)
+                    safe_write_cell(ws, row, 16, check.get('technician_name', ''))
+                    safe_write_cell(ws, row, 17, check.get('qc_name', ''))
+                    safe_write_cell(ws, row, 18, check.get('remarks', ''))
+
+            elif process_type == "pack":
+                for idx, check in enumerate(checks):
+                    row = start_row + idx
+                    pack_result = check.get('module_x', '')
+                    if pack_result == '' or pack_result == 'N/A':
+                        pack_result = check.get('module_y', '')
+                    timestamp = check.get('start_date')
+                    timestamp_str = timestamp if isinstance(timestamp, str) else (timestamp.strftime("%Y-%m-%d %H:%M:%S") if timestamp else "")
+
+                    safe_write_cell(ws, row, 12, pack_result)
+                    safe_write_cell(ws, row, 14, timestamp_str)
+                    safe_write_cell(ws, row, 16, check.get('technician_name', ''))
+                    safe_write_cell(ws, row, 18, check.get('remarks', ''))
+
+            elif process_type == "dispatch":
+                if len(checks) == 1:
+                    row = 62
+                    check = checks[0]
+                    result = check.get('module_x', '')
+                    if result == '' or result == 'N/A':
+                        result = check.get('module_y', '')
+                    timestamp = check.get('start_date')
+                    timestamp_str = timestamp if isinstance(timestamp, str) else (timestamp.strftime("%Y-%m-%d %H:%M:%S") if timestamp else "")
+
+                    safe_write_cell(ws, row, 12, result)
+                    safe_write_cell(ws, row, 14, timestamp_str)
+                    safe_write_cell(ws, row, 16, check.get('technician_name', ''))
+                    safe_write_cell(ws, row, 18, check.get('remarks', ''))
+                else:
+                    if checks:
+                        first_check = checks[0]
+                        timestamp = first_check.get('start_date')
+                        timestamp_str = timestamp if isinstance(timestamp, str) else (timestamp.strftime("%Y-%m-%d %H:%M:%S") if timestamp else "")
+                        safe_write_cell(ws, 63, 6, first_check.get('qc_name', ''))
+                        safe_write_cell(ws, 63, 10, timestamp_str)
+
+                    for idx, check in enumerate(checks):
+                        row = 64 + idx
+                        result = check.get('module_x', '')
+                        if result == '' or result == 'N/A':
+                            result = check.get('module_y', '')
+                        safe_write_cell(ws, row, 12, result)
+                        safe_write_cell(ws, row, 16, check.get('remarks', ''))
+
+        # Save to bytes (in-memory)
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+        return output.getvalue()
+
+    except Exception as e:
+        logger.error(f"Error generating Excel bytes for {battery_pack_id}: {e}", exc_info=True)
+        return None
+
+
+def generate_all_reports_excel_bytes() -> Optional[bytes]:
+    """
+    Generate Excel with all battery packs as sheets and return as bytes (in-memory).
+    Does NOT save to disk - for download only.
+    """
+    try:
+        template_path = Path("sample.xlsx")
+        if not template_path.exists():
+            logger.error("Template sample.xlsx not found")
+            return None
+
+        wb = openpyxl.load_workbook(template_path)
+
+        # Get all battery pack IDs from database
+        battery_ids = get_all_battery_packs()
+
+        if not battery_ids:
+            logger.info("No battery packs in database")
+            return None
+
+        # Remove all sheets except template (first sheet)
+        while len(wb.worksheets) > 1:
+            wb.remove(wb.worksheets[1])
+
+        # Create sheet for each battery pack
+        for battery_id in battery_ids:
+            template_sheet = wb.worksheets[0]
+            ws = wb.copy_worksheet(template_sheet)
+            ws.title = battery_id
+
+            # Write Battery Pack ID
+            safe_write_cell(ws, 6, 10, battery_id)
+
+            # Get all QC checks for this battery pack
+            all_checks = get_qc_checks(battery_id)
+
+            # Group by process
+            checks_by_process = {}
+            for check in all_checks:
+                process_name = check['process_name']
+                if process_name not in checks_by_process:
+                    checks_by_process[process_name] = []
+                checks_by_process[process_name].append(check)
+
+            # Write data (same logic as generate_master_excel)
+            for process_name, checks in checks_by_process.items():
+                if process_name not in PROCESS_ROW_MAPPING:
+                    continue
+
+                process_info = PROCESS_ROW_MAPPING[process_name]
+                start_row = process_info["start_row"]
+                process_type = process_info["type"]
+
+                if process_type == "standard":
+                    for idx, check in enumerate(checks):
+                        row = start_row + idx
+                        start_date = check.get('start_date')
+                        end_date = check.get('end_date')
+
+                        if start_date:
+                            start_date_str = start_date if isinstance(start_date, str) else start_date.strftime("%Y-%m-%d %H:%M:%S")
+                        else:
+                            start_date_str = ""
+
+                        if end_date:
+                            end_date_str = end_date if isinstance(end_date, str) else end_date.strftime("%Y-%m-%d %H:%M:%S")
+                        else:
+                            end_date_str = ""
+
+                        safe_write_cell(ws, row, 12, check.get('module_x', ''))
+                        safe_write_cell(ws, row, 13, check.get('module_y', ''))
+                        safe_write_cell(ws, row, 14, start_date_str)
+                        safe_write_cell(ws, row, 15, end_date_str)
+                        safe_write_cell(ws, row, 16, check.get('technician_name', ''))
+                        safe_write_cell(ws, row, 17, check.get('qc_name', ''))
+                        safe_write_cell(ws, row, 18, check.get('remarks', ''))
+
+                elif process_type == "pack":
+                    for idx, check in enumerate(checks):
+                        row = start_row + idx
+                        pack_result = check.get('module_x', '')
+                        if pack_result == '' or pack_result == 'N/A':
+                            pack_result = check.get('module_y', '')
+                        timestamp = check.get('start_date')
+                        timestamp_str = timestamp if isinstance(timestamp, str) else (timestamp.strftime("%Y-%m-%d %H:%M:%S") if timestamp else "")
+
+                        safe_write_cell(ws, row, 12, pack_result)
+                        safe_write_cell(ws, row, 14, timestamp_str)
+                        safe_write_cell(ws, row, 16, check.get('technician_name', ''))
+                        safe_write_cell(ws, row, 18, check.get('remarks', ''))
+
+                elif process_type == "dispatch":
+                    if len(checks) == 1:
+                        row = 62
+                        check = checks[0]
+                        result = check.get('module_x', '')
+                        if result == '' or result == 'N/A':
+                            result = check.get('module_y', '')
+                        timestamp = check.get('start_date')
+                        timestamp_str = timestamp if isinstance(timestamp, str) else (timestamp.strftime("%Y-%m-%d %H:%M:%S") if timestamp else "")
+
+                        safe_write_cell(ws, row, 12, result)
+                        safe_write_cell(ws, row, 14, timestamp_str)
+                        safe_write_cell(ws, row, 16, check.get('technician_name', ''))
+                        safe_write_cell(ws, row, 18, check.get('remarks', ''))
+                    else:
+                        if checks:
+                            first_check = checks[0]
+                            timestamp = first_check.get('start_date')
+                            timestamp_str = timestamp if isinstance(timestamp, str) else (timestamp.strftime("%Y-%m-%d %H:%M:%S") if timestamp else "")
+                            safe_write_cell(ws, 63, 6, first_check.get('qc_name', ''))
+                            safe_write_cell(ws, 63, 10, timestamp_str)
+
+                        for idx, check in enumerate(checks):
+                            row = 64 + idx
+                            result = check.get('module_x', '')
+                            if result == '' or result == 'N/A':
+                                result = check.get('module_y', '')
+                            safe_write_cell(ws, row, 12, result)
+                            safe_write_cell(ws, row, 16, check.get('remarks', ''))
+
+        # Save to bytes (in-memory)
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        logger.info(f"Generated all reports Excel bytes with {len(battery_ids)} battery packs")
+        return output.getvalue()
+
+    except Exception as e:
+        logger.error(f"Error generating all reports Excel bytes: {e}", exc_info=True)
+        return None

@@ -36,7 +36,8 @@ from database import (
     get_qc_checks, get_dashboard_status
 )
 from excel_generator import (
-    generate_battery_excel, generate_master_excel, update_excel_after_entry
+    generate_battery_excel, generate_master_excel, update_excel_after_entry,
+    generate_battery_excel_bytes, generate_all_reports_excel_bytes
 )
 from backup_manager import create_backup, list_backups, get_database_size
 
@@ -1807,62 +1808,15 @@ def render_dashboard_tab():
 # ============================================================================
 
 def render_reports_tab():
-    """Render reports management interface."""
+    """Render reports management interface - reads directly from database."""
     st.markdown("## Production Reports")
     st.caption("View, search, and download production reports")
 
     try:
-        # Read from master sample.xlsx file
-        master_file = Path("sample.xlsx")
+        # Read battery packs directly from DATABASE (not sample.xlsx)
+        all_packs = get_all_battery_packs()
 
-        if not master_file.exists():
-            st.info("No reports found. sample.xlsx not found.")
-            return
-
-        # Load workbook to get sheet names (with error handling for corrupted files)
-        try:
-            wb = openpyxl.load_workbook(master_file, read_only=True)
-            battery_sheets = [sheet for sheet in wb.sheetnames[1:]]  # Skip template
-            wb.close()
-        except Exception as file_error:
-            st.error(f"The sample.xlsx file appears to be corrupted: {str(file_error)}")
-            st.warning("This can happen if the file was modified while in use or not saved properly.")
-
-            st.markdown("### Recovery Options:")
-            st.markdown("""
-            1. **If you have a backup:** Restore sample.xlsx from your backup
-            2. **To recreate from template:** Upload a fresh sample.xlsx template file
-            3. **Data is safe:** Your database records are intact - only the Excel file needs repair
-            """)
-
-            # Option to upload a fresh template
-            uploaded_file = st.file_uploader("Upload fresh sample.xlsx template", type=['xlsx'])
-            if uploaded_file is not None:
-                try:
-                    # Save the uploaded file
-                    with open(master_file, 'wb') as f:
-                        f.write(uploaded_file.getvalue())
-                    st.success("Template uploaded successfully! Please refresh the page.")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Failed to save template: {str(e)}")
-
-            # Show database reports as fallback
-            st.markdown("---")
-            st.markdown("### Database Reports (Fallback)")
-            st.caption("Data from database - Excel file not required")
-
-            all_packs = get_all_battery_packs()
-            if all_packs:
-                st.info(f"Found {len(all_packs)} battery packs in database")
-                for pack_id in sorted(all_packs):
-                    st.markdown(f"- {pack_id}")
-            else:
-                st.info("No battery packs found in database")
-
-            return
-
-        if not battery_sheets:
+        if not all_packs:
             st.info("No reports available. Generate QR codes and enter production data to create reports.")
             return
 
@@ -1881,62 +1835,55 @@ def render_reports_tab():
         with col_sort:
             sort_order = st.selectbox(
                 "Sort By",
-                options=["Newest First", "Oldest First", "Name A-Z", "Name Z-A"],
+                options=["Name A-Z", "Name Z-A"],
                 key="sort_reports"
             )
 
-        # Filter sheets
+        # Filter packs
         if search_term:
-            filtered_sheets = [s for s in battery_sheets if search_term.lower() in s.lower()]
+            filtered_packs = [p for p in all_packs if search_term.lower() in p.lower()]
         else:
-            filtered_sheets = battery_sheets
+            filtered_packs = list(all_packs)
 
-        # Sort sheets
+        # Sort packs
         if sort_order == "Name A-Z":
-            filtered_sheets = sorted(filtered_sheets)
+            filtered_packs = sorted(filtered_packs)
         elif sort_order == "Name Z-A":
-            filtered_sheets = sorted(filtered_sheets, reverse=True)
-        else:
-            # For time-based sorting, just use alphabetical
-            filtered_sheets = sorted(filtered_sheets)
+            filtered_packs = sorted(filtered_packs, reverse=True)
 
-        st.caption(f"Showing {len(filtered_sheets)} of {len(battery_sheets)} reports")
+        st.caption(f"Showing {len(filtered_packs)} of {len(all_packs)} reports")
 
         st.markdown("---")
 
-        # Display sheets
-        for sheet_name in filtered_sheets:
+        # Display battery packs from database
+        for pack_id in filtered_packs:
             col1, col2 = st.columns([4, 1])
 
             with col1:
-                st.markdown(f"**{sheet_name}**")
-                st.caption(f"Sheet in: sample.xlsx")
+                # Get QC check count for this pack
+                checks = get_qc_checks(pack_id)
+                check_count = len(checks) if checks else 0
+                st.markdown(f"**{pack_id}**")
+                st.caption(f"QC Checks: {check_count} records in database")
 
             with col2:
-                # Download individual battery pack Excel file
-                individual_file = Path("excel_reports") / f"{sheet_name}.xlsx"
-
-                # Generate if doesn't exist
-                if not individual_file.exists():
-                    try:
-                        generate_battery_excel(sheet_name)
-                    except Exception as e:
-                        logger.error(f"Error generating Excel for {sheet_name}: {e}")
-
-                # Now try to download
-                if individual_file.exists():
-                    with open(individual_file, 'rb') as f:
-                        file_data = f.read()
-                    st.download_button(
-                        label="Download File",
-                        data=file_data,
-                        file_name=f"{sheet_name}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        key=f"download_{sheet_name}",
-                        use_container_width=True
-                    )
-                else:
-                    st.caption("File not found")
+                # Generate Excel on-demand when downloading
+                try:
+                    excel_data = generate_battery_excel_bytes(pack_id)
+                    if excel_data:
+                        st.download_button(
+                            label="Download",
+                            data=excel_data,
+                            file_name=f"{pack_id}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key=f"download_{pack_id}",
+                            use_container_width=True
+                        )
+                    else:
+                        st.caption("No data")
+                except Exception as e:
+                    logger.error(f"Error generating Excel for {pack_id}: {e}")
+                    st.caption("Error")
 
             st.markdown('<hr style="margin: 0.5rem 0;">', unsafe_allow_html=True)
 
@@ -1945,55 +1892,63 @@ def render_reports_tab():
         # Bulk Export
         st.markdown("### Bulk Actions")
 
-        # Download Complete File button
-        with open(master_file, 'rb') as f:
-            master_data = f.read()
-        st.download_button(
-            label="Download Complete File (sample.xlsx)",
-            data=master_data,
-            file_name="sample.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key="download_complete",
-            use_container_width=True
-        )
+        # Download All Reports as single Excel file (generated on-demand)
+        col_excel, col_csv = st.columns(2)
 
-        # Generate CSV data from database
-        try:
-            import io
-            csv_buffer = io.StringIO()
+        with col_excel:
+            if st.button("Generate All Reports Excel", type="primary", use_container_width=True):
+                with st.spinner("Generating Excel file with all reports..."):
+                    try:
+                        excel_bytes = generate_all_reports_excel_bytes()
+                        if excel_bytes:
+                            st.download_button(
+                                label="Download All Reports (Excel)",
+                                data=excel_bytes,
+                                file_name=f"all_reports_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                key="download_all_excel",
+                                use_container_width=True
+                            )
+                        else:
+                            st.warning("No data to export")
+                    except Exception as e:
+                        st.error(f"Error generating Excel: {str(e)}")
+                        logger.error(f"Error generating all reports Excel: {e}")
 
-            # Get all battery packs and their data
-            all_packs = get_all_battery_packs()
+        with col_csv:
+            # Generate CSV data from database
+            try:
+                csv_buffer = io.StringIO()
 
-            # Write CSV header
-            csv_buffer.write("Battery Pack ID,Process Name,Check Name,Module X,Module Y,Technician,QC Name,Remarks,Start Date,End Date\n")
+                # Write CSV header
+                csv_buffer.write("Battery Pack ID,Process Name,Check Name,Module X,Module Y,Technician,QC Name,Remarks,Start Date,End Date\n")
 
-            # Write data rows
-            for pack_id in all_packs:
-                checks = get_qc_checks(pack_id)
-                for check in checks:
-                    csv_buffer.write(f"{pack_id},")
-                    csv_buffer.write(f"{check.get('process_name', '')},")
-                    csv_buffer.write(f"{check.get('check_name', '')},")
-                    csv_buffer.write(f"{check.get('module_x', '')},")
-                    csv_buffer.write(f"{check.get('module_y', '')},")
-                    csv_buffer.write(f"{check.get('technician_name', '')},")
-                    csv_buffer.write(f"{check.get('qc_name', '')},")
-                    csv_buffer.write(f"{check.get('remarks', '')},")
-                    csv_buffer.write(f"{check.get('start_date', '')},")
-                    csv_buffer.write(f"{check.get('end_date', '')}\n")
+                # Write data rows
+                for pack_id in all_packs:
+                    checks = get_qc_checks(pack_id)
+                    for check in checks:
+                        csv_buffer.write(f"{pack_id},")
+                        csv_buffer.write(f"{check.get('process_name', '')},")
+                        csv_buffer.write(f"{check.get('check_name', '')},")
+                        csv_buffer.write(f"{check.get('module_x', '')},")
+                        csv_buffer.write(f"{check.get('module_y', '')},")
+                        csv_buffer.write(f"{check.get('technician_name', '')},")
+                        csv_buffer.write(f"{check.get('qc_name', '')},")
+                        csv_buffer.write(f"{check.get('remarks', '')},")
+                        csv_buffer.write(f"{check.get('start_date', '')},")
+                        csv_buffer.write(f"{check.get('end_date', '')}\n")
 
-            csv_data = csv_buffer.getvalue()
+                csv_data = csv_buffer.getvalue()
 
-            st.download_button(
-                label="Download CSV Report",
-                data=csv_data,
-                file_name=f"production_reports_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv",
-                use_container_width=True
-            )
-        except Exception as e:
-            logger.error(f"Error generating CSV: {e}")
+                st.download_button(
+                    label="Download CSV Report",
+                    data=csv_data,
+                    file_name=f"production_reports_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+            except Exception as e:
+                logger.error(f"Error generating CSV: {e}")
 
         # Database Backup Section
         st.markdown("---")
