@@ -33,7 +33,7 @@ load_dotenv()
 from database import (
     init_database, save_qc_checks, update_process_completion,
     check_process_status, battery_pack_exists, get_all_battery_packs,
-    get_qc_checks, get_dashboard_status
+    get_qc_checks, get_dashboard_status, get_not_ok_checks
 )
 from excel_generator import (
     generate_battery_excel, generate_master_excel, update_excel_after_entry,
@@ -197,6 +197,28 @@ def check_process_data_exists(battery_pack_id: str, process_name: str) -> dict:
     NOW READS FROM DATABASE instead of Excel
     """
     return check_process_status(battery_pack_id, process_name)
+
+
+def get_blocking_not_ok_processes(pack_id: str, target_process_name: str) -> list:
+    """
+    Check if any process BEFORE target_process_name has a NOT OK result.
+    Returns list of blocking items: [{process_name, check_name, module}, ...]
+    """
+    process_order = list(PROCESS_DEFINITIONS.keys())
+
+    try:
+        target_index = process_order.index(target_process_name)
+    except ValueError:
+        return []
+
+    # Get all processes that come BEFORE the target
+    prior_processes = process_order[:target_index]
+
+    if not prior_processes:
+        return []
+
+    return get_not_ok_checks(pack_id, prior_processes)
+
 
 def complete_process(battery_pack_id: str, process_name: str) -> Path:
     """
@@ -1097,6 +1119,23 @@ def render_data_entry_tab():
     # Check if this process already has data
     process_status = check_process_data_exists(battery_pack_id, process_name)
 
+    # === BLOCKING CHECK: Prevent entry if a prior process has NOT OK ===
+    blockers = get_blocking_not_ok_processes(battery_pack_id, process_name)
+    if blockers:
+        st.error("**Cannot proceed with this process**")
+        st.markdown("The following prior process(es) have **NOT OK** results that must be resolved first:")
+        for blocker in blockers:
+            st.markdown(
+                f"- **{blocker['process_name']}** — "
+                f"Check: *{blocker['check_name']}* — "
+                f"**{blocker['module']}** is NOT OK"
+            )
+        st.info(
+            "Please go back and select the blocking process above, change the NOT OK result to OK, "
+            "and then return to this process."
+        )
+        return
+
     # For standard processes (1-7), handle start/complete workflow
     if process_status['process_type'] == 'standard':
         if process_status['completed']:
@@ -1196,8 +1235,6 @@ def render_data_entry_tab():
 
     # Load existing data if available
     existing_data = {}
-    existing_technician = ""
-    existing_qc = ""
     existing_remarks = ""
 
     if process_status['has_any_data']:
@@ -1206,17 +1243,16 @@ def render_data_entry_tab():
             checks = get_qc_checks(battery_pack_id, process_name)
 
             if checks:
-                # Get operator info from first check (all have same values)
-                existing_technician = checks[0].get('technician_name', '')
-                existing_qc = checks[0].get('qc_name', '')
                 existing_remarks = checks[0].get('remarks', '')
 
-                # Build existing data dict
+                # Build existing data dict with per-check technician/QC names
                 for check in checks:
                     check_name = check.get('check_name', '')
                     existing_data[check_name] = {
                         'module_x': check.get('module_x', ''),
-                        'module_y': check.get('module_y', '')
+                        'module_y': check.get('module_y', ''),
+                        'technician_name': check.get('technician_name', ''),
+                        'qc_name': check.get('qc_name', '')
                     }
         except Exception as e:
             logger.error(f"Error loading existing data: {e}")
@@ -1227,25 +1263,7 @@ def render_data_entry_tab():
     st.markdown(f"### Process: {process_name}")
     st.caption(process_def.get('work_description', ''))
 
-    # Operator Information
-    col_tech, col_qc = st.columns(2)
-
-    with col_tech:
-        technician_name = st.text_input(
-            "Technician Name",
-            value=existing_technician,
-            key="technician_name",
-            placeholder="Enter technician name"
-        )
-
-    with col_qc:
-        qc_name = st.text_input(
-            "QC Inspector (Optional)",
-            value=existing_qc,
-            key="qc_name",
-            placeholder="Enter QC inspector name"
-        )
-
+    # Remarks (process-level)
     remarks = st.text_area(
         "Remarks (Optional)",
         value=existing_remarks,
@@ -1266,6 +1284,7 @@ def render_data_entry_tab():
     checks_data = {}
 
     for idx, check_name in enumerate(qc_checks):
+        check_key = check_name.replace(' ', '_').replace('/', '_').replace('(', '').replace(')', '')
         st.markdown(f"""
         <div class="card">
             <div class="card-header">Check {idx+1}: {check_name}</div>
@@ -1276,6 +1295,25 @@ def render_data_entry_tab():
         existing_check = existing_data.get(check_name, {})
         existing_module_x = existing_check.get('module_x', '')
         existing_module_y = existing_check.get('module_y', '')
+        existing_tech = existing_check.get('technician_name', '')
+        existing_qc_name = existing_check.get('qc_name', '')
+
+        # Per-check Technician and QC Inspector inputs
+        col_tech, col_qc = st.columns(2)
+        with col_tech:
+            check_technician = st.text_input(
+                "Technician Name",
+                value=existing_tech,
+                key=f"tech_{idx}_{check_key}",
+                placeholder="Enter technician name"
+            )
+        with col_qc:
+            check_qc_name = st.text_input(
+                "QC Inspector (Optional)",
+                value=existing_qc_name,
+                key=f"qc_{idx}_{check_key}",
+                placeholder="Enter QC inspector name"
+            )
 
         # Find index of existing value in options
         options = ["", "OK", "NOT OK", "N/A"]
@@ -1289,7 +1327,7 @@ def render_data_entry_tab():
                 "Module X",
                 options=options,
                 index=default_x_index,
-                key=f"check_{idx}_{check_name.replace(' ', '_').replace('/', '_')}_x",
+                key=f"check_{idx}_{check_key}_x",
                 horizontal=True
             )
 
@@ -1298,32 +1336,44 @@ def render_data_entry_tab():
                 "Module Y",
                 options=options,
                 index=default_y_index,
-                key=f"check_{idx}_{check_name.replace(' ', '_').replace('/', '_')}_y",
+                key=f"check_{idx}_{check_key}_y",
                 horizontal=True
             )
 
         if module_x or module_y:
             checks_data[check_name] = {
                 "module_x": module_x if module_x else "",
-                "module_y": module_y if module_y else ""
+                "module_y": module_y if module_y else "",
+                "technician_name": check_technician.strip() if check_technician else "",
+                "qc_name": check_qc_name.strip() if check_qc_name else ""
             }
 
     st.markdown("---")
 
     # Submit Button
     if st.button("Save Production Data", type="primary", use_container_width=True, key="save_data"):
-        # Simple validation
-        if not technician_name or not technician_name.strip():
-            st.error("Technician name is required")
+        # Per-check validation for technician names
+        missing_technicians = []
+        for check_name_key, check_values in checks_data.items():
+            tech_name = check_values.get('technician_name', '').strip()
+            if not tech_name:
+                missing_technicians.append(check_name_key)
+            elif len(tech_name) > 100:
+                st.error(f"Technician name too long for check '{check_name_key}' (max 100 characters)")
+                return
+
+        if missing_technicians:
+            st.error("Technician name is required for each QC check with data entered:")
+            for mt in missing_technicians:
+                st.markdown(f"- {mt}")
             return
 
-        if len(technician_name) > 100:
-            st.error("Technician name too long (max 100 characters)")
-            return
-
-        if qc_name and len(qc_name) > 100:
-            st.error("QC name too long (max 100 characters)")
-            return
+        # Per-check validation for QC names (optional but max length)
+        for check_name_key, check_values in checks_data.items():
+            qc_val = check_values.get('qc_name', '').strip()
+            if qc_val and len(qc_val) > 100:
+                st.error(f"QC inspector name too long for check '{check_name_key}' (max 100 characters)")
+                return
 
         if remarks and len(remarks) > 500:
             st.error("Remarks too long (max 500 characters)")
@@ -1335,20 +1385,22 @@ def render_data_entry_tab():
 
         try:
             with st.spinner("Saving data..."):
-                # Convert checks_data to list format
+                # Convert checks_data to list format with per-check technician/QC names
                 checks_list = []
                 for check_name, check_values in checks_data.items():
                     checks_list.append({
                         'check_name': check_name,
                         'module_x': check_values['module_x'],
-                        'module_y': check_values['module_y']
+                        'module_y': check_values['module_y'],
+                        'technician_name': check_values.get('technician_name', ''),
+                        'qc_name': check_values.get('qc_name', '')
                     })
 
                 output_file = add_detailed_entry(
                     battery_pack_id=battery_pack_id,
                     process_name=process_name,
-                    technician_name=technician_name,
-                    qc_name=qc_name,
+                    technician_name="",
+                    qc_name="",
                     remarks=remarks,
                     checks=checks_list
                 )
@@ -1365,7 +1417,7 @@ def render_data_entry_tab():
                 if 'edit_mode' in st.session_state:
                     del st.session_state['edit_mode']
                 for key in list(st.session_state.keys()):
-                    if key.startswith('check_'):
+                    if key.startswith('check_') or key.startswith('tech_') or key.startswith('qc_'):
                         del st.session_state[key]
 
                 if st.button("Enter Next Pack", key="scan_next"):

@@ -10,8 +10,13 @@ import time
 import logging
 from typing import List, Dict, Optional
 from datetime import datetime
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# Get the directory where this script is located (for absolute database path)
+SCRIPT_DIR = Path(__file__).parent
+DB_PATH = SCRIPT_DIR / 'battery_mes.db'
 
 # Database connection handling
 _connection_pool = None
@@ -40,7 +45,8 @@ def get_connection():
         import sqlite3
 
         # Increased timeout for concurrent writes (30 seconds)
-        conn = sqlite3.connect('battery_mes.db', timeout=30.0, check_same_thread=False)
+        # Use absolute path to ensure correct database file regardless of working directory
+        conn = sqlite3.connect(str(DB_PATH), timeout=30.0, check_same_thread=False)
         conn.row_factory = sqlite3.Row
 
         # Enable WAL mode for better concurrent access
@@ -272,6 +278,9 @@ def save_qc_checks(pack_id: str, process_name: str, technician_name: str,
             check_name = check.get('check_name', '')
             module_x_value = check.get('module_x', '')
             module_y_value = check.get('module_y', '')
+            # Per-check technician/QC names, falling back to process-level params
+            check_technician = check.get('technician_name', '') or technician_name
+            check_qc = check.get('qc_name', '') or qc_name
 
             # Check if this check already exists
             if is_postgres:
@@ -307,7 +316,7 @@ def save_qc_checks(pack_id: str, process_name: str, technician_name: str,
                             technician_name = %s, qc_name = %s, remarks = %s,
                             updated_at = %s
                         WHERE id = %s
-                    """, (final_module_x, final_module_y, technician_name, qc_name,
+                    """, (final_module_x, final_module_y, check_technician, check_qc,
                           remarks, timestamp, row_id))
                 else:
                     cur.execute("""
@@ -316,7 +325,7 @@ def save_qc_checks(pack_id: str, process_name: str, technician_name: str,
                             technician_name = ?, qc_name = ?, remarks = ?,
                             updated_at = ?
                         WHERE id = ?
-                    """, (final_module_x, final_module_y, technician_name, qc_name,
+                    """, (final_module_x, final_module_y, check_technician, check_qc,
                           remarks, timestamp, row_id))
 
                 logger.debug(f"Updated check '{check_name}' - Module X: '{final_module_x}', Module Y: '{final_module_y}'")
@@ -331,7 +340,7 @@ def save_qc_checks(pack_id: str, process_name: str, technician_name: str,
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """, (pack_id, process_name, check_name,
                           module_x_value, module_y_value,
-                          technician_name, qc_name, remarks,
+                          check_technician, check_qc, remarks,
                           timestamp, timestamp, timestamp))
                 else:
                     cur.execute("""
@@ -341,7 +350,7 @@ def save_qc_checks(pack_id: str, process_name: str, technician_name: str,
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (pack_id, process_name, check_name,
                           module_x_value, module_y_value,
-                          technician_name, qc_name, remarks,
+                          check_technician, check_qc, remarks,
                           timestamp, timestamp, timestamp))
 
                 logger.debug(f"Inserted new check '{check_name}' - Module X: '{module_x_value}', Module Y: '{module_y_value}'")
@@ -593,5 +602,68 @@ def battery_pack_exists(pack_id: str) -> bool:
     except Exception as e:
         logger.error(f"Error checking battery pack existence: {e}")
         return False
+    finally:
+        release_connection(conn)
+
+
+def get_not_ok_checks(pack_id: str, process_names: list) -> list:
+    """
+    Query qc_checks for NOT OK results in specified processes for a battery pack.
+    Returns list of dicts: {process_name, check_name, module} for each NOT OK finding.
+    """
+    if not process_names:
+        return []
+
+    conn = get_connection()
+    db_url = get_database_url()
+    is_postgres = db_url.startswith('postgres')
+
+    try:
+        cur = conn.cursor()
+        results = []
+
+        if is_postgres:
+            placeholders = ','.join(['%s'] * len(process_names))
+            cur.execute(f"""
+                SELECT process_name, check_name, module_x, module_y
+                FROM qc_checks
+                WHERE pack_id = %s AND process_name IN ({placeholders})
+                ORDER BY process_name, created_at ASC
+            """, [pack_id] + process_names)
+        else:
+            placeholders = ','.join(['?'] * len(process_names))
+            cur.execute(f"""
+                SELECT process_name, check_name, module_x, module_y
+                FROM qc_checks
+                WHERE pack_id = ? AND process_name IN ({placeholders})
+                ORDER BY process_name, created_at ASC
+            """, [pack_id] + process_names)
+
+        rows = cur.fetchall()
+
+        for row in rows:
+            process_name = row[0]
+            check_name = row[1]
+            module_x = row[2] or ''
+            module_y = row[3] or ''
+
+            if module_x == 'NOT OK':
+                results.append({
+                    'process_name': process_name,
+                    'check_name': check_name,
+                    'module': 'Module X'
+                })
+            if module_y == 'NOT OK':
+                results.append({
+                    'process_name': process_name,
+                    'check_name': check_name,
+                    'module': 'Module Y'
+                })
+
+        return results
+
+    except Exception as e:
+        logger.error(f"Error checking NOT OK status: {e}")
+        return []
     finally:
         release_connection(conn)
