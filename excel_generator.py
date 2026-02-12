@@ -6,12 +6,16 @@ CRITICAL: Format and data mapping must remain identical
 
 import openpyxl
 from openpyxl.cell.cell import MergedCell
+from openpyxl.styles import Font
 from pathlib import Path
 from datetime import datetime
 import logging
 from typing import Optional
 import io
 from database import get_qc_checks, get_all_battery_packs
+
+# Standard font to override Wingdings in template (columns L/M use Wingdings which breaks WPS Office)
+STANDARD_FONT = Font(name='Arial', size=10)
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +38,23 @@ PROCESS_ROW_MAPPING = {
 }
 
 
-def safe_write_cell(ws, row: int, column: int, value):
-    """Safely write to a cell, handling merged cells."""
+def format_date_str(date_val) -> str:
+    """Format a date value as string without microseconds.
+    Handles both datetime objects and strings from the database."""
+    if not date_val:
+        return ""
+    if isinstance(date_val, str):
+        # Strip microseconds from strings like '2026-01-20 10:28:44.574484'
+        dot_pos = date_val.rfind('.')
+        if dot_pos != -1 and dot_pos > 10:  # Only strip if it looks like microseconds after a time
+            return date_val[:dot_pos]
+        return date_val
+    # datetime object
+    return date_val.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def safe_write_cell(ws, row: int, column: int, value, font=None):
+    """Safely write to a cell, handling merged cells. Optionally override font."""
     try:
         cell = ws.cell(row=row, column=column)
         # Check if this is a MergedCell
@@ -48,10 +67,14 @@ def safe_write_cell(ws, row: int, column: int, value):
                     min_col = merged_range.min_col
                     top_left_cell = ws.cell(row=min_row, column=min_col)
                     top_left_cell.value = value
+                    if font:
+                        top_left_cell.font = font
                     return
         else:
             # Normal cell, write directly
             cell.value = value
+            if font:
+                cell.font = font
     except Exception as e:
         logger.error(f"Error writing to cell ({row}, {column}): {e}")
         raise
@@ -105,29 +128,11 @@ def generate_battery_excel(battery_pack_id: str) -> Optional[Path]:
                 for idx, check in enumerate(checks):
                     row = start_row + idx
 
-                    # Format dates exactly as before (handle both datetime objects and strings)
-                    start_date = check.get('start_date')
-                    end_date = check.get('end_date')
+                    start_date_str = format_date_str(check.get('start_date'))
+                    end_date_str = format_date_str(check.get('end_date'))
 
-                    # Convert to string if it's a datetime object, otherwise use as-is
-                    if start_date:
-                        if isinstance(start_date, str):
-                            start_date_str = start_date
-                        else:
-                            start_date_str = start_date.strftime("%Y-%m-%d %H:%M:%S")
-                    else:
-                        start_date_str = ""
-
-                    if end_date:
-                        if isinstance(end_date, str):
-                            end_date_str = end_date
-                        else:
-                            end_date_str = end_date.strftime("%Y-%m-%d %H:%M:%S")
-                    else:
-                        end_date_str = ""
-
-                    safe_write_cell(ws, row, 12, check.get('module_x', ''))      # L: Module X QC Result
-                    safe_write_cell(ws, row, 13, check.get('module_y', ''))      # M: Module Y QC Result
+                    safe_write_cell(ws, row, 12, check.get('module_x', ''), font=STANDARD_FONT)  # L: Module X QC Result
+                    safe_write_cell(ws, row, 13, check.get('module_y', ''), font=STANDARD_FONT)  # M: Module Y QC Result
                     safe_write_cell(ws, row, 14, start_date_str)                 # N: Start date
                     safe_write_cell(ws, row, 15, end_date_str)                   # O: End date
                     safe_write_cell(ws, row, 16, check.get('technician_name', ''))  # P: Technician Name/sign
@@ -145,17 +150,9 @@ def generate_battery_excel(battery_pack_id: str) -> Optional[Path]:
                     if pack_result == '' or pack_result == 'N/A':
                         pack_result = check.get('module_y', '')
 
-                    # Handle both datetime objects and strings
-                    timestamp = check.get('start_date')
-                    if timestamp:
-                        if isinstance(timestamp, str):
-                            timestamp_str = timestamp
-                        else:
-                            timestamp_str = timestamp.strftime("%Y-%m-%d %H:%M:%S")
-                    else:
-                        timestamp_str = ""
+                    timestamp_str = format_date_str(check.get('start_date'))
 
-                    safe_write_cell(ws, row, 12, pack_result)                       # L: Pack QC Result
+                    safe_write_cell(ws, row, 12, pack_result, font=STANDARD_FONT)   # L: Pack QC Result
                     safe_write_cell(ws, row, 14, timestamp_str)                     # N: Date
                     safe_write_cell(ws, row, 16, check.get('technician_name', ''))  # P: Name
                     safe_write_cell(ws, row, 18, check.get('remarks', ''))          # R: Remarks
@@ -171,17 +168,9 @@ def generate_battery_excel(battery_pack_id: str) -> Optional[Path]:
                     if result == '' or result == 'N/A':
                         result = check.get('module_y', '')
 
-                    # Handle both datetime objects and strings
-                    timestamp = check.get('start_date')
-                    if timestamp:
-                        if isinstance(timestamp, str):
-                            timestamp_str = timestamp
-                        else:
-                            timestamp_str = timestamp.strftime("%Y-%m-%d %H:%M:%S")
-                    else:
-                        timestamp_str = ""
+                    timestamp_str = format_date_str(check.get('start_date'))
 
-                    safe_write_cell(ws, row, 12, result)                            # L: Result
+                    safe_write_cell(ws, row, 12, result, font=STANDARD_FONT)        # L: Result
                     safe_write_cell(ws, row, 14, timestamp_str)                     # N: Date
                     safe_write_cell(ws, row, 16, check.get('technician_name', ''))  # P: Name
                     safe_write_cell(ws, row, 18, check.get('remarks', ''))          # R: Remarks
@@ -190,16 +179,7 @@ def generate_battery_excel(battery_pack_id: str) -> Optional[Path]:
                     # Special: Inspector name in F63, Date in J63
                     if checks:
                         first_check = checks[0]
-                        timestamp = first_check.get('start_date')
-
-                        # Handle both datetime objects and strings
-                        if timestamp:
-                            if isinstance(timestamp, str):
-                                timestamp_str = timestamp
-                            else:
-                                timestamp_str = timestamp.strftime("%Y-%m-%d %H:%M:%S")
-                        else:
-                            timestamp_str = ""
+                        timestamp_str = format_date_str(first_check.get('start_date'))
 
                         safe_write_cell(ws, 63, 6, first_check.get('qc_name', ''))  # F63: Inspector Name
                         safe_write_cell(ws, 63, 10, timestamp_str)                  # J63: Date
@@ -212,7 +192,7 @@ def generate_battery_excel(battery_pack_id: str) -> Optional[Path]:
                         if result == '' or result == 'N/A':
                             result = check.get('module_y', '')
 
-                        safe_write_cell(ws, row, 12, result)                        # L: Result
+                        safe_write_cell(ws, row, 12, result, font=STANDARD_FONT)    # L: Result
                         safe_write_cell(ws, row, 16, check.get('remarks', ''))      # P: Comments
 
         # Save to individual file
@@ -290,28 +270,12 @@ def generate_master_excel() -> Optional[Path]:
                 if process_type == "standard":
                     for idx, check in enumerate(checks):
                         row = start_row + idx
-                        start_date = check.get('start_date')
-                        end_date = check.get('end_date')
 
-                        # Handle both datetime objects and strings
-                        if start_date:
-                            if isinstance(start_date, str):
-                                start_date_str = start_date
-                            else:
-                                start_date_str = start_date.strftime("%Y-%m-%d %H:%M:%S")
-                        else:
-                            start_date_str = ""
+                        start_date_str = format_date_str(check.get('start_date'))
+                        end_date_str = format_date_str(check.get('end_date'))
 
-                        if end_date:
-                            if isinstance(end_date, str):
-                                end_date_str = end_date
-                            else:
-                                end_date_str = end_date.strftime("%Y-%m-%d %H:%M:%S")
-                        else:
-                            end_date_str = ""
-
-                        safe_write_cell(ws, row, 12, check.get('module_x', ''))
-                        safe_write_cell(ws, row, 13, check.get('module_y', ''))
+                        safe_write_cell(ws, row, 12, check.get('module_x', ''), font=STANDARD_FONT)
+                        safe_write_cell(ws, row, 13, check.get('module_y', ''), font=STANDARD_FONT)
                         safe_write_cell(ws, row, 14, start_date_str)
                         safe_write_cell(ws, row, 15, end_date_str)
                         safe_write_cell(ws, row, 16, check.get('technician_name', ''))
@@ -324,18 +288,10 @@ def generate_master_excel() -> Optional[Path]:
                         pack_result = check.get('module_x', '')
                         if pack_result == '' or pack_result == 'N/A':
                             pack_result = check.get('module_y', '')
-                        timestamp = check.get('start_date')
 
-                        # Handle both datetime objects and strings
-                        if timestamp:
-                            if isinstance(timestamp, str):
-                                timestamp_str = timestamp
-                            else:
-                                timestamp_str = timestamp.strftime("%Y-%m-%d %H:%M:%S")
-                        else:
-                            timestamp_str = ""
+                        timestamp_str = format_date_str(check.get('start_date'))
 
-                        safe_write_cell(ws, row, 12, pack_result)
+                        safe_write_cell(ws, row, 12, pack_result, font=STANDARD_FONT)
                         safe_write_cell(ws, row, 14, timestamp_str)
                         safe_write_cell(ws, row, 16, check.get('technician_name', ''))
                         safe_write_cell(ws, row, 18, check.get('remarks', ''))
@@ -347,34 +303,17 @@ def generate_master_excel() -> Optional[Path]:
                         result = check.get('module_x', '')
                         if result == '' or result == 'N/A':
                             result = check.get('module_y', '')
-                        timestamp = check.get('start_date')
 
-                        # Handle both datetime objects and strings
-                        if timestamp:
-                            if isinstance(timestamp, str):
-                                timestamp_str = timestamp
-                            else:
-                                timestamp_str = timestamp.strftime("%Y-%m-%d %H:%M:%S")
-                        else:
-                            timestamp_str = ""
+                        timestamp_str = format_date_str(check.get('start_date'))
 
-                        safe_write_cell(ws, row, 12, result)
+                        safe_write_cell(ws, row, 12, result, font=STANDARD_FONT)
                         safe_write_cell(ws, row, 14, timestamp_str)
                         safe_write_cell(ws, row, 16, check.get('technician_name', ''))
                         safe_write_cell(ws, row, 18, check.get('remarks', ''))
                     else:
                         if checks:
                             first_check = checks[0]
-                            timestamp = first_check.get('start_date')
-
-                            # Handle both datetime objects and strings
-                            if timestamp:
-                                if isinstance(timestamp, str):
-                                    timestamp_str = timestamp
-                                else:
-                                    timestamp_str = timestamp.strftime("%Y-%m-%d %H:%M:%S")
-                            else:
-                                timestamp_str = ""
+                            timestamp_str = format_date_str(first_check.get('start_date'))
 
                             safe_write_cell(ws, 63, 6, first_check.get('qc_name', ''))
                             safe_write_cell(ws, 63, 10, timestamp_str)
@@ -384,7 +323,7 @@ def generate_master_excel() -> Optional[Path]:
                             result = check.get('module_x', '')
                             if result == '' or result == 'N/A':
                                 result = check.get('module_y', '')
-                            safe_write_cell(ws, row, 12, result)
+                            safe_write_cell(ws, row, 12, result, font=STANDARD_FONT)
                             safe_write_cell(ws, row, 16, check.get('remarks', ''))
 
         # Save master output file (NOT the template!)
@@ -462,21 +401,12 @@ def generate_battery_excel_bytes(battery_pack_id: str) -> Optional[bytes]:
             if process_type == "standard":
                 for idx, check in enumerate(checks):
                     row = start_row + idx
-                    start_date = check.get('start_date')
-                    end_date = check.get('end_date')
 
-                    if start_date:
-                        start_date_str = start_date if isinstance(start_date, str) else start_date.strftime("%Y-%m-%d %H:%M:%S")
-                    else:
-                        start_date_str = ""
+                    start_date_str = format_date_str(check.get('start_date'))
+                    end_date_str = format_date_str(check.get('end_date'))
 
-                    if end_date:
-                        end_date_str = end_date if isinstance(end_date, str) else end_date.strftime("%Y-%m-%d %H:%M:%S")
-                    else:
-                        end_date_str = ""
-
-                    safe_write_cell(ws, row, 12, check.get('module_x', ''))
-                    safe_write_cell(ws, row, 13, check.get('module_y', ''))
+                    safe_write_cell(ws, row, 12, check.get('module_x', ''), font=STANDARD_FONT)
+                    safe_write_cell(ws, row, 13, check.get('module_y', ''), font=STANDARD_FONT)
                     safe_write_cell(ws, row, 14, start_date_str)
                     safe_write_cell(ws, row, 15, end_date_str)
                     safe_write_cell(ws, row, 16, check.get('technician_name', ''))
@@ -489,10 +419,10 @@ def generate_battery_excel_bytes(battery_pack_id: str) -> Optional[bytes]:
                     pack_result = check.get('module_x', '')
                     if pack_result == '' or pack_result == 'N/A':
                         pack_result = check.get('module_y', '')
-                    timestamp = check.get('start_date')
-                    timestamp_str = timestamp if isinstance(timestamp, str) else (timestamp.strftime("%Y-%m-%d %H:%M:%S") if timestamp else "")
 
-                    safe_write_cell(ws, row, 12, pack_result)
+                    timestamp_str = format_date_str(check.get('start_date'))
+
+                    safe_write_cell(ws, row, 12, pack_result, font=STANDARD_FONT)
                     safe_write_cell(ws, row, 14, timestamp_str)
                     safe_write_cell(ws, row, 16, check.get('technician_name', ''))
                     safe_write_cell(ws, row, 18, check.get('remarks', ''))
@@ -504,18 +434,17 @@ def generate_battery_excel_bytes(battery_pack_id: str) -> Optional[bytes]:
                     result = check.get('module_x', '')
                     if result == '' or result == 'N/A':
                         result = check.get('module_y', '')
-                    timestamp = check.get('start_date')
-                    timestamp_str = timestamp if isinstance(timestamp, str) else (timestamp.strftime("%Y-%m-%d %H:%M:%S") if timestamp else "")
 
-                    safe_write_cell(ws, row, 12, result)
+                    timestamp_str = format_date_str(check.get('start_date'))
+
+                    safe_write_cell(ws, row, 12, result, font=STANDARD_FONT)
                     safe_write_cell(ws, row, 14, timestamp_str)
                     safe_write_cell(ws, row, 16, check.get('technician_name', ''))
                     safe_write_cell(ws, row, 18, check.get('remarks', ''))
                 else:
                     if checks:
                         first_check = checks[0]
-                        timestamp = first_check.get('start_date')
-                        timestamp_str = timestamp if isinstance(timestamp, str) else (timestamp.strftime("%Y-%m-%d %H:%M:%S") if timestamp else "")
+                        timestamp_str = format_date_str(first_check.get('start_date'))
                         safe_write_cell(ws, 63, 6, first_check.get('qc_name', ''))
                         safe_write_cell(ws, 63, 10, timestamp_str)
 
@@ -524,7 +453,7 @@ def generate_battery_excel_bytes(battery_pack_id: str) -> Optional[bytes]:
                         result = check.get('module_x', '')
                         if result == '' or result == 'N/A':
                             result = check.get('module_y', '')
-                        safe_write_cell(ws, row, 12, result)
+                        safe_write_cell(ws, row, 12, result, font=STANDARD_FONT)
                         safe_write_cell(ws, row, 16, check.get('remarks', ''))
 
         # Save to bytes (in-memory)
@@ -593,21 +522,12 @@ def generate_all_reports_excel_bytes() -> Optional[bytes]:
                 if process_type == "standard":
                     for idx, check in enumerate(checks):
                         row = start_row + idx
-                        start_date = check.get('start_date')
-                        end_date = check.get('end_date')
 
-                        if start_date:
-                            start_date_str = start_date if isinstance(start_date, str) else start_date.strftime("%Y-%m-%d %H:%M:%S")
-                        else:
-                            start_date_str = ""
+                        start_date_str = format_date_str(check.get('start_date'))
+                        end_date_str = format_date_str(check.get('end_date'))
 
-                        if end_date:
-                            end_date_str = end_date if isinstance(end_date, str) else end_date.strftime("%Y-%m-%d %H:%M:%S")
-                        else:
-                            end_date_str = ""
-
-                        safe_write_cell(ws, row, 12, check.get('module_x', ''))
-                        safe_write_cell(ws, row, 13, check.get('module_y', ''))
+                        safe_write_cell(ws, row, 12, check.get('module_x', ''), font=STANDARD_FONT)
+                        safe_write_cell(ws, row, 13, check.get('module_y', ''), font=STANDARD_FONT)
                         safe_write_cell(ws, row, 14, start_date_str)
                         safe_write_cell(ws, row, 15, end_date_str)
                         safe_write_cell(ws, row, 16, check.get('technician_name', ''))
@@ -620,10 +540,10 @@ def generate_all_reports_excel_bytes() -> Optional[bytes]:
                         pack_result = check.get('module_x', '')
                         if pack_result == '' or pack_result == 'N/A':
                             pack_result = check.get('module_y', '')
-                        timestamp = check.get('start_date')
-                        timestamp_str = timestamp if isinstance(timestamp, str) else (timestamp.strftime("%Y-%m-%d %H:%M:%S") if timestamp else "")
 
-                        safe_write_cell(ws, row, 12, pack_result)
+                        timestamp_str = format_date_str(check.get('start_date'))
+
+                        safe_write_cell(ws, row, 12, pack_result, font=STANDARD_FONT)
                         safe_write_cell(ws, row, 14, timestamp_str)
                         safe_write_cell(ws, row, 16, check.get('technician_name', ''))
                         safe_write_cell(ws, row, 18, check.get('remarks', ''))
@@ -635,18 +555,17 @@ def generate_all_reports_excel_bytes() -> Optional[bytes]:
                         result = check.get('module_x', '')
                         if result == '' or result == 'N/A':
                             result = check.get('module_y', '')
-                        timestamp = check.get('start_date')
-                        timestamp_str = timestamp if isinstance(timestamp, str) else (timestamp.strftime("%Y-%m-%d %H:%M:%S") if timestamp else "")
 
-                        safe_write_cell(ws, row, 12, result)
+                        timestamp_str = format_date_str(check.get('start_date'))
+
+                        safe_write_cell(ws, row, 12, result, font=STANDARD_FONT)
                         safe_write_cell(ws, row, 14, timestamp_str)
                         safe_write_cell(ws, row, 16, check.get('technician_name', ''))
                         safe_write_cell(ws, row, 18, check.get('remarks', ''))
                     else:
                         if checks:
                             first_check = checks[0]
-                            timestamp = first_check.get('start_date')
-                            timestamp_str = timestamp if isinstance(timestamp, str) else (timestamp.strftime("%Y-%m-%d %H:%M:%S") if timestamp else "")
+                            timestamp_str = format_date_str(first_check.get('start_date'))
                             safe_write_cell(ws, 63, 6, first_check.get('qc_name', ''))
                             safe_write_cell(ws, 63, 10, timestamp_str)
 
@@ -655,7 +574,7 @@ def generate_all_reports_excel_bytes() -> Optional[bytes]:
                             result = check.get('module_x', '')
                             if result == '' or result == 'N/A':
                                 result = check.get('module_y', '')
-                            safe_write_cell(ws, row, 12, result)
+                            safe_write_cell(ws, row, 12, result, font=STANDARD_FONT)
                             safe_write_cell(ws, row, 16, check.get('remarks', ''))
 
         # Save to bytes (in-memory)
