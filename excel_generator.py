@@ -15,6 +15,12 @@ from database import get_qc_checks, get_all_battery_packs
 
 logger = logging.getLogger(__name__)
 
+# CRITICAL: Use a dedicated template file that is NEVER overwritten
+# template.xlsx = clean original template (read-only, never modified)
+# sample.xlsx = master output file (regenerated from template + DB data)
+TEMPLATE_PATH = Path(__file__).parent / "template.xlsx"
+MASTER_OUTPUT_PATH = Path(__file__).parent / "sample.xlsx"
+
 # Row mapping for Excel sheet - Duplicated here to avoid circular import
 PROCESS_ROW_MAPPING = {
     "Cell sorting": {"start_row": 8, "type": "standard"},
@@ -59,13 +65,12 @@ def generate_battery_excel(battery_pack_id: str) -> Optional[Path]:
     Returns: Path to generated Excel file
     """
     try:
-        # Load template
-        template_path = Path("sample.xlsx")
-        if not template_path.exists():
-            logger.error("Template sample.xlsx not found")
+        # Load template (NEVER modified - always clean)
+        if not TEMPLATE_PATH.exists():
+            logger.error(f"Template {TEMPLATE_PATH} not found")
             return None
 
-        wb = openpyxl.load_workbook(template_path)
+        wb = openpyxl.load_workbook(TEMPLATE_PATH)
         ws = wb.worksheets[0]  # Use first sheet as template
 
         # Write Battery Pack ID to cell J6 (exactly as before)
@@ -233,20 +238,19 @@ def generate_master_excel() -> Optional[Path]:
     Returns: Path to master Excel file
     """
     try:
-        template_path = Path("sample.xlsx")
-        if not template_path.exists():
-            logger.error("Template sample.xlsx not found")
+        if not TEMPLATE_PATH.exists():
+            logger.error(f"Template {TEMPLATE_PATH} not found")
             return None
 
-        # Load template
-        wb = openpyxl.load_workbook(template_path)
+        # Load clean template (NEVER modified)
+        wb = openpyxl.load_workbook(TEMPLATE_PATH)
 
         # Get all battery pack IDs from database
         battery_ids = get_all_battery_packs()
 
         if not battery_ids:
             logger.info("No battery packs in database yet")
-            return template_path
+            return MASTER_OUTPUT_PATH
 
         # Remove all sheets except template (first sheet)
         while len(wb.worksheets) > 1:
@@ -383,12 +387,11 @@ def generate_master_excel() -> Optional[Path]:
                             safe_write_cell(ws, row, 12, result)
                             safe_write_cell(ws, row, 16, check.get('remarks', ''))
 
-        # Save master file
-        master_path = Path("sample.xlsx")
-        wb.save(master_path)
+        # Save master output file (NOT the template!)
+        wb.save(MASTER_OUTPUT_PATH)
 
-        logger.info(f"Generated master Excel: {master_path} with {len(battery_ids)} battery packs")
-        return master_path
+        logger.info(f"Generated master Excel: {MASTER_OUTPUT_PATH} with {len(battery_ids)} battery packs")
+        return MASTER_OUTPUT_PATH
 
     except Exception as e:
         logger.error(f"Error generating master Excel: {e}", exc_info=True)
@@ -425,13 +428,12 @@ def generate_battery_excel_bytes(battery_pack_id: str) -> Optional[bytes]:
     Does NOT save to disk - for download only.
     """
     try:
-        # Load template
-        template_path = Path("sample.xlsx")
-        if not template_path.exists():
-            logger.error("Template sample.xlsx not found")
+        # Load clean template (NEVER modified)
+        if not TEMPLATE_PATH.exists():
+            logger.error(f"Template {TEMPLATE_PATH} not found")
             return None
 
-        wb = openpyxl.load_workbook(template_path)
+        wb = openpyxl.load_workbook(TEMPLATE_PATH)
         ws = wb.worksheets[0]
 
         # Write Battery Pack ID
@@ -542,12 +544,11 @@ def generate_all_reports_excel_bytes() -> Optional[bytes]:
     Does NOT save to disk - for download only.
     """
     try:
-        template_path = Path("sample.xlsx")
-        if not template_path.exists():
-            logger.error("Template sample.xlsx not found")
+        if not TEMPLATE_PATH.exists():
+            logger.error(f"Template {TEMPLATE_PATH} not found")
             return None
 
-        wb = openpyxl.load_workbook(template_path)
+        wb = openpyxl.load_workbook(TEMPLATE_PATH)
 
         # Get all battery pack IDs from database
         battery_ids = get_all_battery_packs()
