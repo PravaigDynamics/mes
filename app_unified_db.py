@@ -1869,37 +1869,39 @@ def render_reports_tab():
 
         st.markdown("---")
 
-        # Display battery packs from database
-        for pack_id in filtered_packs:
-            col1, col2 = st.columns([4, 1])
+        # Display battery packs in a fixed-height scrollable container
+        # so the Backup section below is always visible at a fixed position
+        with st.container(height=500):
+            for pack_id in filtered_packs:
+                col1, col2 = st.columns([4, 1])
 
-            with col1:
-                # Get QC check count for this pack (cached)
-                checks = cached_get_qc_checks(pack_id)
-                check_count = len(checks) if checks else 0
-                st.markdown(f"**{pack_id}**")
-                st.caption(f"QC Checks: {check_count} records in database")
+                with col1:
+                    # Get QC check count for this pack (cached)
+                    checks = cached_get_qc_checks(pack_id)
+                    check_count = len(checks) if checks else 0
+                    st.markdown(f"**{pack_id}**")
+                    st.caption(f"QC Checks: {check_count} records in database")
 
-            with col2:
-                # Generate Excel on-demand when downloading
-                try:
-                    excel_data = generate_battery_excel_bytes(pack_id)
-                    if excel_data:
-                        st.download_button(
-                            label="Download",
-                            data=excel_data,
-                            file_name=f"{pack_id}.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            key=f"download_{pack_id}",
-                            use_container_width=True
-                        )
-                    else:
-                        st.caption("No data")
-                except Exception as e:
-                    logger.error(f"Error generating Excel for {pack_id}: {e}")
-                    st.caption("Error")
+                with col2:
+                    # Generate Excel on-demand when downloading
+                    try:
+                        excel_data = generate_battery_excel_bytes(pack_id)
+                        if excel_data:
+                            st.download_button(
+                                label="Download",
+                                data=excel_data,
+                                file_name=f"{pack_id}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                key=f"download_{pack_id}",
+                                use_container_width=True
+                            )
+                        else:
+                            st.caption("No data")
+                    except Exception as e:
+                        logger.error(f"Error generating Excel for {pack_id}: {e}")
+                        st.caption("Error")
 
-            st.markdown('<hr style="margin: 0.5rem 0;">', unsafe_allow_html=True)
+                st.markdown('<hr style="margin: 0.5rem 0;">', unsafe_allow_html=True)
 
         st.markdown("---")
 
