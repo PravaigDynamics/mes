@@ -1870,8 +1870,13 @@ def render_reports_tab():
         st.markdown("---")
 
         # Display battery packs in a fixed-height scrollable container
-        # so the Backup section below is always visible at a fixed position
-        with st.container(height=500):
+        # so the Backup section below is always visible at a fixed position.
+        # Fallback to plain container if Streamlit version < 1.33 (no height support).
+        try:
+            _reports_container = st.container(height=500)
+        except TypeError:
+            _reports_container = st.container()
+        with _reports_container:
             for pack_id in filtered_packs:
                 col1, col2 = st.columns([4, 1])
 
