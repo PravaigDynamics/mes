@@ -185,11 +185,30 @@ def cached_check_process_status(pack_id: str, process_name: str):
 def cached_get_all_battery_packs():
     return get_all_battery_packs()
 
+@st.cache_data(ttl=300)
+def cached_generate_battery_excel_bytes(pack_id: str):
+    """Cache Excel bytes per pack — regenerated only after a QC save or every 5 min."""
+    return generate_battery_excel_bytes(pack_id)
+
+@st.cache_data(ttl=60)
+def cached_list_backups():
+    return list_backups()
+
+@st.cache_data(ttl=60)
+def cached_get_database_size():
+    return get_database_size()
+
 def clear_data_caches():
     """Call after any write operation to ensure fresh data on next read."""
     cached_get_qc_checks.clear()
     cached_check_process_status.clear()
     cached_get_all_battery_packs.clear()
+    cached_generate_battery_excel_bytes.clear()
+
+def clear_backup_caches():
+    """Call after creating a backup so the backup list refreshes."""
+    cached_list_backups.clear()
+    cached_get_database_size.clear()
 
 
 def check_battery_exists(battery_pack_id: str) -> dict:
@@ -1888,9 +1907,9 @@ def render_reports_tab():
                     st.caption(f"QC Checks: {check_count} records in database")
 
                 with col2:
-                    # Generate Excel on-demand when downloading
+                    # Use cached Excel bytes — only generated once per pack per session
                     try:
-                        excel_data = generate_battery_excel_bytes(pack_id)
+                        excel_data = cached_generate_battery_excel_bytes(pack_id)
                         if excel_data:
                             st.download_button(
                                 label="Download",
@@ -1978,10 +1997,10 @@ def render_reports_tab():
         col_info, col_backup = st.columns([2, 1])
 
         with col_info:
-            db_size = get_database_size()
+            db_size = cached_get_database_size()
             st.info(f"Current Database Size: **{db_size} MB**")
 
-            backups = list_backups()
+            backups = cached_list_backups()
             if backups:
                 latest_backup = backups[0]
                 st.success(f"Latest Backup: {latest_backup['filename']} ({latest_backup['size_mb']} MB, {latest_backup['age_days']} days ago)")
@@ -1994,6 +2013,7 @@ def render_reports_tab():
                 with st.spinner("Creating backup..."):
                     backup_file = create_backup()
                     if backup_file:
+                        clear_backup_caches()
                         st.success(f"Backup created: {backup_file.name}")
                         st.rerun()
                     else:
