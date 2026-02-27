@@ -816,7 +816,6 @@ def render_data_entry_tab():
                 st.session_state['barcode_scanner_open'] = True
                 st.session_state['photo_upload_open'] = False
                 st.session_state['camera_scanner_open'] = False
-                st.rerun()
 
         with col2:
             st.markdown("""
@@ -833,7 +832,6 @@ def render_data_entry_tab():
                 st.session_state['photo_upload_open'] = True
                 st.session_state['camera_scanner_open'] = False
                 st.session_state['barcode_scanner_open'] = False
-                st.rerun()
 
         with col3:
             st.markdown("""
@@ -850,7 +848,6 @@ def render_data_entry_tab():
                 st.session_state['camera_scanner_open'] = True
                 st.session_state['photo_upload_open'] = False
                 st.session_state['barcode_scanner_open'] = False
-                st.rerun()
 
     # Barcode Scanner Input (Priority Method)
     if st.session_state.get('barcode_scanner_open', False):
@@ -954,9 +951,6 @@ def render_data_entry_tab():
                         st.session_state['scanned_battery_id'] = battery_id
                         st.session_state['photo_upload_open'] = False
 
-                        # Add a brief delay for user to see confirmation
-                        import time
-                        time.sleep(1)
                         st.rerun()
                     else:
                         st.markdown("""
