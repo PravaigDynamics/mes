@@ -339,17 +339,14 @@ def generate_master_excel() -> Optional[Path]:
 
 def update_excel_after_entry(battery_pack_id: str):
     """
-    Update Excel files immediately after data entry
-    Called after every save/complete action
+    Update Excel file for the individual battery pack immediately after data entry.
+    Master Excel (sample.xlsx) is intentionally NOT regenerated here — it is
+    generated on-demand when the Reports tab is used. This keeps saves fast.
     """
     try:
-        # Generate individual Excel file
+        # Generate individual Excel file only
         generate_battery_excel(battery_pack_id)
-
-        # Also update master Excel
-        generate_master_excel()
-
-        logger.info(f"Excel files updated for {battery_pack_id}")
+        logger.info(f"Excel updated for {battery_pack_id}")
 
     except Exception as e:
         logger.error(f"Error updating Excel: {e}", exc_info=True)

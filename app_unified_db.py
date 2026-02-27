@@ -167,6 +167,31 @@ def safe_write_cell(ws, row: int, column: int, value):
         logger.error(f"Error writing to cell ({row}, {column}): {e}")
         raise
 
+# ============================================================================
+# CACHED DB READ WRAPPERS
+# Short TTL prevents stale data; cache is explicitly cleared after every write.
+# Keeps repeated clicks/reruns fast without hitting the database every time.
+# ============================================================================
+
+@st.cache_data(ttl=5)
+def cached_get_qc_checks(pack_id: str, process_name: str = None):
+    return get_qc_checks(pack_id, process_name)
+
+@st.cache_data(ttl=5)
+def cached_check_process_status(pack_id: str, process_name: str):
+    return check_process_status(pack_id, process_name)
+
+@st.cache_data(ttl=10)
+def cached_get_all_battery_packs():
+    return get_all_battery_packs()
+
+def clear_data_caches():
+    """Call after any write operation to ensure fresh data on next read."""
+    cached_get_qc_checks.clear()
+    cached_check_process_status.clear()
+    cached_get_all_battery_packs.clear()
+
+
 def check_battery_exists(battery_pack_id: str) -> dict:
     """Check if battery pack ID already exists in system."""
     exists_info = {
@@ -194,9 +219,9 @@ def check_battery_exists(battery_pack_id: str) -> dict:
 def check_process_data_exists(battery_pack_id: str, process_name: str) -> dict:
     """
     Check if data already exists for a specific process in a battery pack.
-    NOW READS FROM DATABASE instead of Excel
+    Uses cached DB read for performance.
     """
-    return check_process_status(battery_pack_id, process_name)
+    return cached_check_process_status(battery_pack_id, process_name)
 
 
 def get_blocking_not_ok_processes(pack_id: str, target_process_name: str) -> list:
@@ -322,7 +347,10 @@ def add_detailed_entry(battery_pack_id: str, process_name: str, technician_name:
         if not success:
             raise ValueError("Failed to save data to database")
 
-        # 2. Generate Excel files immediately (same format as before)
+        # 2. Clear cached DB reads so next rerun shows fresh data immediately
+        clear_data_caches()
+
+        # 3. Generate Excel file for this battery pack
         update_excel_after_entry(battery_pack_id)
 
         # 3. Automatic backup after data entry
@@ -1175,8 +1203,7 @@ def render_data_entry_tab():
 
     if process_status['has_any_data']:
         try:
-            from database import get_qc_checks
-            checks = get_qc_checks(battery_pack_id, process_name)
+            checks = cached_get_qc_checks(battery_pack_id, process_name)
 
             if checks:
                 existing_remarks = checks[0].get('remarks', '')
@@ -1603,8 +1630,8 @@ def render_dashboard_tab():
         process_stages = ["Cell sorting", "Module assembly", "Pre Encapsulation", "Wire Bonding",
                          "Post Encapsulation", "EOL Testing", "Pack assembly", "Ready for Dispatch"]
 
-        # Get all battery packs from database
-        all_packs = get_all_battery_packs()
+        # Get all battery packs from database (cached)
+        all_packs = cached_get_all_battery_packs()
 
         if not all_packs:
             st.info("No production data available. Begin tracking battery packs to see metrics here.")
@@ -1614,8 +1641,8 @@ def render_dashboard_tab():
             try:
                 row_data = {"Sl.No": idx, "Battery Pack": pack_id}
 
-                # Get all QC checks for this pack from database
-                all_checks = get_qc_checks(pack_id)
+                # Get all QC checks for this pack from database (cached)
+                all_checks = cached_get_qc_checks(pack_id)
 
                 # Group checks by process
                 processes_completed = {}
@@ -1806,8 +1833,8 @@ def render_reports_tab():
     st.caption("View, search, and download production reports")
 
     try:
-        # Read battery packs directly from DATABASE (not sample.xlsx)
-        all_packs = get_all_battery_packs()
+        # Read battery packs from DATABASE (cached)
+        all_packs = cached_get_all_battery_packs()
 
         if not all_packs:
             st.info("No reports available. Generate QR codes and enter production data to create reports.")
@@ -1853,8 +1880,8 @@ def render_reports_tab():
             col1, col2 = st.columns([4, 1])
 
             with col1:
-                # Get QC check count for this pack
-                checks = get_qc_checks(pack_id)
+                # Get QC check count for this pack (cached)
+                checks = cached_get_qc_checks(pack_id)
                 check_count = len(checks) if checks else 0
                 st.markdown(f"**{pack_id}**")
                 st.caption(f"QC Checks: {check_count} records in database")
@@ -1918,7 +1945,7 @@ def render_reports_tab():
 
                 # Write data rows
                 for pack_id in all_packs:
-                    checks = get_qc_checks(pack_id)
+                    checks = cached_get_qc_checks(pack_id)
                     for check in checks:
                         csv_buffer.write(f"{pack_id},")
                         csv_buffer.write(f"{check.get('process_name', '')},")
