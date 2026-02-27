@@ -31,7 +31,7 @@ load_dotenv()
 
 # Import database and Excel generator
 from database import (
-    init_database, save_qc_checks, update_process_completion,
+    init_database, save_qc_checks,
     check_process_status, battery_pack_exists, get_all_battery_packs,
     get_qc_checks, get_dashboard_status, get_not_ok_checks
 )
@@ -220,35 +220,6 @@ def get_blocking_not_ok_processes(pack_id: str, target_process_name: str) -> lis
     return get_not_ok_checks(pack_id, prior_processes)
 
 
-def complete_process(battery_pack_id: str, process_name: str) -> Path:
-    """
-    Complete a process by updating the end date.
-    NOW: Update database + regenerate Excel
-    """
-    try:
-        # Update database
-        success = update_process_completion(battery_pack_id, process_name)
-
-        if not success:
-            raise ValueError(f"Failed to update database for {battery_pack_id}")
-
-        # Regenerate Excel files immediately
-        update_excel_after_entry(battery_pack_id)
-
-        # Automatic backup after process completion
-        try:
-            backup_file = create_backup()
-            if backup_file:
-                logger.info(f"Automatic backup created after completing {process_name} for {battery_pack_id}")
-        except Exception as backup_error:
-            logger.warning(f"Auto-backup after process completion failed: {backup_error}")
-
-        logger.info(f"Completed process {process_name} for {battery_pack_id}")
-        return Path("sample.xlsx")
-
-    except Exception as e:
-        logger.error(f"Error completing process: {e}", exc_info=True)
-        raise
 
 def generate_qr_code(battery_pack_id: str, size: int = 300, include_label: bool = True) -> bytes:
     """Generate QR code for battery pack ID and save to qr_codes folder."""
@@ -1163,50 +1134,15 @@ def render_data_entry_tab():
             # In edit mode - show form below
             st.info("**Edit Mode:** Modify the data below and click Save to update.")
 
-        elif process_status['has_any_data'] and process_status['both_modules_complete'] and not process_status['completed']:
-            # Both modules filled, but not marked complete - show complete button + continue to form
-            st.info(f"""
-            **Both Modules Complete - Ready to Finalize**
-
-            Both Module X and Module Y data have been entered for process "{process_name}".
-
-            You can mark this process as complete, or continue editing the data below.
-            """)
-            st.markdown('<span class="badge badge-info">Ready to Complete</span>', unsafe_allow_html=True)
-
-            st.markdown("---")
-
-            # Show complete button
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("✓ Complete Process", type="primary", use_container_width=True):
-                    try:
-                        complete_process(battery_pack_id, process_name)
-                        st.success(f"Process '{process_name}' completed successfully! End time recorded.")
-                        st.balloons()
-                        # Clear edit mode
-                        if 'edit_mode' in st.session_state:
-                            del st.session_state['edit_mode']
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Failed to complete process: {str(e)}")
-
-            # Continue to show form for editing
-
-        elif process_status['has_any_data'] and not process_status['both_modules_complete']:
-            # Partial data - show what's missing
-            missing_info = []
-            if not process_status['module_x_complete']:
-                missing_info.append("Module X")
-            if not process_status['module_y_complete']:
-                missing_info.append("Module Y")
+        elif process_status['has_any_data'] and not process_status['completed']:
+            # Partial data - show sub-process progress
+            completed_n = process_status.get('completed_checks', 0)
+            total_n = process_status.get('total_checks', 0)
 
             st.warning(f"""
             **Partial Data Entry**
 
-            Some data has been entered, but the process is incomplete.
-
-            Missing data for: **{', '.join(missing_info)}**
+            {completed_n} of {total_n} sub-processes complete. Sub-process end time is recorded automatically once both Module X and Module Y are saved for each item.
 
             Continue filling in the data below.
             """)
@@ -1285,14 +1221,19 @@ def render_data_entry_tab():
 
     for idx, check_name in enumerate(qc_checks):
         check_key = check_name.replace(' ', '_').replace('/', '_').replace('(', '').replace(')', '')
+
+        # Get existing values for this check (needed here for completion indicator)
+        existing_check = existing_data.get(check_name, {})
+        is_check_done = bool(existing_check.get('end_date'))
+        status_icon = "✓" if is_check_done else "○"
+        header_style = ' style="color:#2e7d32;"' if is_check_done else ''
+        done_label = " &mdash; <em>Completed</em>" if is_check_done else ""
+
         st.markdown(f"""
         <div class="card">
-            <div class="card-header">Check {idx+1}: {check_name}</div>
+            <div class="card-header"{header_style}>{status_icon} Check {idx+1}: {check_name}{done_label}</div>
         </div>
         """, unsafe_allow_html=True)
-
-        # Get existing values for this check
-        existing_check = existing_data.get(check_name, {})
         existing_module_x = existing_check.get('module_x', '')
         existing_module_y = existing_check.get('module_y', '')
         existing_tech = existing_check.get('technician_name', '')

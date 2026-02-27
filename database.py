@@ -308,52 +308,60 @@ def save_qc_checks(pack_id: str, process_name: str, technician_name: str,
                 final_module_x = module_x_value if module_x_value else existing_module_x
                 final_module_y = module_y_value if module_y_value else existing_module_y
 
+                # Auto-complete: set end_date when both modules filled, clear it if either is empty
+                check_is_complete = bool(final_module_x) and bool(final_module_y)
+                check_end_date = timestamp if check_is_complete else None
+
                 # Update the row with merged data
                 if is_postgres:
                     cur.execute("""
                         UPDATE qc_checks
                         SET module_x = %s, module_y = %s,
                             technician_name = %s, qc_name = %s, remarks = %s,
-                            updated_at = %s
+                            end_date = %s, updated_at = %s
                         WHERE id = %s
                     """, (final_module_x, final_module_y, check_technician, check_qc,
-                          remarks, timestamp, row_id))
+                          remarks, check_end_date, timestamp, row_id))
                 else:
                     cur.execute("""
                         UPDATE qc_checks
                         SET module_x = ?, module_y = ?,
                             technician_name = ?, qc_name = ?, remarks = ?,
-                            updated_at = ?
+                            end_date = ?, updated_at = ?
                         WHERE id = ?
                     """, (final_module_x, final_module_y, check_technician, check_qc,
-                          remarks, timestamp, row_id))
+                          remarks, check_end_date, timestamp, row_id))
 
-                logger.debug(f"Updated check '{check_name}' - Module X: '{final_module_x}', Module Y: '{final_module_y}'")
+                logger.debug(f"Updated check '{check_name}' - Module X: '{final_module_x}', Module Y: '{final_module_y}', auto-complete: {check_is_complete}")
 
             else:
                 # Row doesn't exist - INSERT new row
+                # Auto-complete: set end_date immediately if both modules are filled on insert
+                check_is_complete = bool(module_x_value) and bool(module_y_value)
+                check_end_date = timestamp if check_is_complete else None
+
                 if is_postgres:
                     cur.execute("""
                         INSERT INTO qc_checks
                         (pack_id, process_name, check_name, module_x, module_y,
-                         technician_name, qc_name, remarks, start_date, created_at, updated_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                         technician_name, qc_name, remarks, start_date, end_date, created_at, updated_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """, (pack_id, process_name, check_name,
                           module_x_value, module_y_value,
                           check_technician, check_qc, remarks,
-                          timestamp, timestamp, timestamp))
+                          timestamp, check_end_date, timestamp, timestamp))
                 else:
                     cur.execute("""
                         INSERT INTO qc_checks
                         (pack_id, process_name, check_name, module_x, module_y,
-                         technician_name, qc_name, remarks, start_date, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         technician_name, qc_name, remarks, start_date, end_date, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (pack_id, process_name, check_name,
                           module_x_value, module_y_value,
                           check_technician, check_qc, remarks,
-                          timestamp, timestamp, timestamp))
+                          timestamp, check_end_date, timestamp, timestamp))
 
-                logger.debug(f"Inserted new check '{check_name}' - Module X: '{module_x_value}', Module Y: '{module_y_value}'")
+                logger.debug(f"Inserted new check '{check_name}' - Module X: '{module_x_value}', Module Y: '{module_y_value}', auto-complete: {check_is_complete}")
 
         conn.commit()
         logger.info(f"Saved/merged {len(checks)} QC checks for {pack_id} - {process_name}")
@@ -533,11 +541,13 @@ def check_process_status(pack_id: str, process_name: str) -> Dict:
         'both_modules_complete': False,
         'module_x_complete': False,
         'module_y_complete': False,
-        'has_any_data': False
+        'has_any_data': False,
+        'completed_checks': 0,
+        'total_checks': 0
     }
 
     try:
-        from app_unified_db import PROCESS_ROW_MAPPING
+        from app_unified_db import PROCESS_ROW_MAPPING, PROCESS_DEFINITIONS
         process_info = PROCESS_ROW_MAPPING.get(process_name)
         if not process_info:
             return result
@@ -545,35 +555,45 @@ def check_process_status(pack_id: str, process_name: str) -> Dict:
         result['process_type'] = process_info['type']
         checks = get_qc_checks(pack_id, process_name)
 
+        # Total expected checks comes from PROCESS_DEFINITIONS, not just DB rows.
+        # This ensures completion is only True when every defined check has been saved.
+        expected_checks = PROCESS_DEFINITIONS.get(process_name, {}).get('qc_checks', [])
+        expected_total = len(expected_checks) if expected_checks else len(checks)
+
         if checks:
             result['exists'] = True
             result['has_any_data'] = True
             result['started'] = any(check.get('start_date') for check in checks)
-            result['completed'] = any(check.get('end_date') for check in checks)
 
-            # Check if both modules are complete (all non-empty)
+            # Process is complete only when ALL defined checks have their individual end_date set
+            completed_checks = sum(1 for c in checks if c.get('end_date'))
+            result['completed'] = (completed_checks == expected_total) and expected_total > 0
+            result['completed_checks'] = completed_checks
+            result['total_checks'] = expected_total
+
+            # Check if both modules are complete (all non-empty; N/A counts as a valid deliberate entry)
             module_x_count = 0
             module_y_count = 0
-            total_checks = len(checks)
 
             for check in checks:
                 module_x = check.get('module_x', '').strip()
                 module_y = check.get('module_y', '').strip()
 
-                # Count non-empty values
-                if module_x and module_x not in ['', 'N/A']:
+                # Any non-empty value counts (OK, NOT OK, N/A are all deliberate choices)
+                if module_x:
                     module_x_count += 1
-                if module_y and module_y not in ['', 'N/A']:
+                if module_y:
                     module_y_count += 1
 
             # Module is complete if all checks have data
-            result['module_x_complete'] = module_x_count == total_checks
-            result['module_y_complete'] = module_y_count == total_checks
+            result['module_x_complete'] = module_x_count == expected_total
+            result['module_y_complete'] = module_y_count == expected_total
             result['both_modules_complete'] = result['module_x_complete'] and result['module_y_complete']
 
             logger.debug(f"Process status for {pack_id}-{process_name}: "
-                        f"Module X: {module_x_count}/{total_checks}, "
-                        f"Module Y: {module_y_count}/{total_checks}")
+                        f"Module X: {module_x_count}/{expected_total}, "
+                        f"Module Y: {module_y_count}/{expected_total}, "
+                        f"Completed checks: {completed_checks}/{expected_total}")
 
         return result
 
