@@ -1387,24 +1387,54 @@ def render_data_entry_tab():
             st.caption(f"✓ Acceptance Criteria: {ac_list[idx]}")
         existing_module_x = existing_check.get('module_x', '')
         existing_module_y = existing_check.get('module_y', '')
-        existing_tech = existing_check.get('technician_name', '')
-        existing_qc_name = existing_check.get('qc_name', '')
 
-        # Per-check Technician and QC Inspector inputs
-        col_tech, col_qc = st.columns(2)
-        with col_tech:
-            check_technician = st.text_input(
-                "Technician Name",
-                value=existing_tech,
-                key=f"tech_{idx}_{check_key}",
-                placeholder="Enter technician name"
+        # Split existing technician/QC names into Module X and Y values
+        existing_tech = existing_check.get('technician_name', '')
+        if ',' in existing_tech:
+            _tp = existing_tech.split(',', 1)
+            tech_x_val, tech_y_val = _tp[0].strip(), _tp[1].strip()
+        else:
+            tech_x_val = tech_y_val = existing_tech.strip()
+
+        existing_qc = existing_check.get('qc_name', '')
+        if ',' in existing_qc:
+            _qp = existing_qc.split(',', 1)
+            qc_x_val, qc_y_val = _qp[0].strip(), _qp[1].strip()
+        else:
+            qc_x_val = qc_y_val = existing_qc.strip()
+
+        # Per-check Technician inputs — separate for Module X and Module Y
+        col_tx, col_ty = st.columns(2)
+        with col_tx:
+            tech_x = st.text_input(
+                "Module X – Technician",
+                value=tech_x_val,
+                key=f"tech_x_{idx}_{check_key}",
+                placeholder="Module X technician name"
             )
-        with col_qc:
-            check_qc_name = st.text_input(
-                "QC Inspector (Optional)",
-                value=existing_qc_name,
-                key=f"qc_{idx}_{check_key}",
-                placeholder="Enter QC inspector name"
+        with col_ty:
+            tech_y = st.text_input(
+                "Module Y – Technician (Optional)",
+                value=tech_y_val,
+                key=f"tech_y_{idx}_{check_key}",
+                placeholder="Same as Module X if blank"
+            )
+
+        # Per-check QC Inspector inputs — separate for Module X and Module Y
+        col_qx, col_qy = st.columns(2)
+        with col_qx:
+            qc_x = st.text_input(
+                "Module X – QC Inspector (Optional)",
+                value=qc_x_val,
+                key=f"qc_x_{idx}_{check_key}",
+                placeholder="Module X QC inspector"
+            )
+        with col_qy:
+            qc_y = st.text_input(
+                "Module Y – QC Inspector (Optional)",
+                value=qc_y_val,
+                key=f"qc_y_{idx}_{check_key}",
+                placeholder="Same as Module X if blank"
             )
 
         # Find index of existing value in options
@@ -1442,11 +1472,20 @@ def render_data_entry_tab():
         )
 
         if module_x or module_y or check_remarks.strip():
+            # Combine Module X/Y names; if Y is blank or same as X, store single name
+            _tech_x = tech_x.strip()
+            _tech_y = tech_y.strip() or _tech_x
+            combined_tech = f"{_tech_x}, {_tech_y}" if _tech_y != _tech_x else _tech_x
+
+            _qc_x = qc_x.strip()
+            _qc_y = qc_y.strip() or _qc_x
+            combined_qc = f"{_qc_x}, {_qc_y}" if _qc_y != _qc_x else _qc_x
+
             checks_data[check_name] = {
                 "module_x": module_x if module_x else "",
                 "module_y": module_y if module_y else "",
-                "technician_name": check_technician.strip() if check_technician else "",
-                "qc_name": check_qc_name.strip() if check_qc_name else "",
+                "technician_name": combined_tech,
+                "qc_name": combined_qc,
                 "remarks": check_remarks.strip()
             }
 

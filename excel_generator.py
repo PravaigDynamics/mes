@@ -39,6 +39,15 @@ PROCESS_ROW_MAPPING = {
 }
 
 
+def format_module_names(combined: str) -> str:
+    """Convert 'NameX, NameY' → 'Module X: NameX\nModule Y: NameY'.
+    If single name (no comma), return as-is."""
+    if combined and ',' in combined:
+        parts = combined.split(',', 1)
+        return f"Module X: {parts[0].strip()}\nModule Y: {parts[1].strip()}"
+    return combined.strip() if combined else ''
+
+
 def format_date_str(date_val) -> str:
     """Format a date value as string without microseconds.
     Handles both datetime objects and strings from the database."""
@@ -140,8 +149,8 @@ def generate_battery_excel(battery_pack_id: str) -> Optional[Path]:
                     safe_write_cell(ws, row, 13, check.get('module_y', ''), font=STANDARD_FONT)  # M: Module Y QC Result
                     safe_write_cell(ws, row, 14, start_date_str)                 # N: Start date
                     safe_write_cell(ws, row, 15, end_date_str)                   # O: End date
-                    safe_write_cell(ws, row, 16, check.get('technician_name', ''))  # P: Technician Name/sign
-                    safe_write_cell(ws, row, 17, check.get('qc_name', ''))      # Q: QC Name/Sign
+                    safe_write_cell(ws, row, 16, format_module_names(check.get('technician_name', '')))  # P: Technician Name/sign
+                    safe_write_cell(ws, row, 17, format_module_names(check.get('qc_name', '')))      # Q: QC Name/Sign
                     safe_write_cell(ws, row, 18, check.get('remarks', ''))      # R: Remarks
 
             elif process_type == "pack":
@@ -159,7 +168,7 @@ def generate_battery_excel(battery_pack_id: str) -> Optional[Path]:
 
                     safe_write_cell(ws, row, 12, pack_result, font=STANDARD_FONT)   # L: Pack QC Result
                     safe_write_cell(ws, row, 14, timestamp_str)                     # N: Date
-                    safe_write_cell(ws, row, 16, check.get('technician_name', ''))  # P: Name
+                    safe_write_cell(ws, row, 16, format_module_names(check.get('technician_name', '')))  # P: Name
                     safe_write_cell(ws, row, 18, check.get('remarks', ''))          # R: Remarks
 
             elif process_type == "dispatch":
@@ -177,7 +186,7 @@ def generate_battery_excel(battery_pack_id: str) -> Optional[Path]:
 
                     safe_write_cell(ws, row, 12, result, font=STANDARD_FONT)        # L: Result
                     safe_write_cell(ws, row, 14, timestamp_str)                     # N: Date
-                    safe_write_cell(ws, row, 16, check.get('technician_name', ''))  # P: Name
+                    safe_write_cell(ws, row, 16, format_module_names(check.get('technician_name', '')))  # P: Name
                     safe_write_cell(ws, row, 18, check.get('remarks', ''))          # R: Remarks
                 else:
                     # Process 10: Packaging Instructions & PDIR Acceptance
@@ -186,7 +195,7 @@ def generate_battery_excel(battery_pack_id: str) -> Optional[Path]:
                         first_check = checks[0]
                         timestamp_str = format_date_str(first_check.get('start_date'))
 
-                        safe_write_cell(ws, 63, 6, first_check.get('qc_name', ''))  # F63: Inspector Name
+                        safe_write_cell(ws, 63, 6, first_format_module_names(check.get('qc_name', '')))  # F63: Inspector Name
                         safe_write_cell(ws, 63, 10, timestamp_str)                  # J63: Date
 
                     # Data rows starting at 64
@@ -287,8 +296,8 @@ def generate_master_excel() -> Optional[Path]:
                         safe_write_cell(ws, row, 13, check.get('module_y', ''), font=STANDARD_FONT)
                         safe_write_cell(ws, row, 14, start_date_str)
                         safe_write_cell(ws, row, 15, end_date_str)
-                        safe_write_cell(ws, row, 16, check.get('technician_name', ''))
-                        safe_write_cell(ws, row, 17, check.get('qc_name', ''))
+                        safe_write_cell(ws, row, 16, format_module_names(check.get('technician_name', '')))
+                        safe_write_cell(ws, row, 17, format_module_names(check.get('qc_name', '')))
                         safe_write_cell(ws, row, 18, check.get('remarks', ''))
 
                 elif process_type == "pack":
@@ -302,7 +311,7 @@ def generate_master_excel() -> Optional[Path]:
 
                         safe_write_cell(ws, row, 12, pack_result, font=STANDARD_FONT)
                         safe_write_cell(ws, row, 14, timestamp_str)
-                        safe_write_cell(ws, row, 16, check.get('technician_name', ''))
+                        safe_write_cell(ws, row, 16, format_module_names(check.get('technician_name', '')))
                         safe_write_cell(ws, row, 18, check.get('remarks', ''))
 
                 elif process_type == "dispatch":
@@ -317,14 +326,14 @@ def generate_master_excel() -> Optional[Path]:
 
                         safe_write_cell(ws, row, 12, result, font=STANDARD_FONT)
                         safe_write_cell(ws, row, 14, timestamp_str)
-                        safe_write_cell(ws, row, 16, check.get('technician_name', ''))
+                        safe_write_cell(ws, row, 16, format_module_names(check.get('technician_name', '')))
                         safe_write_cell(ws, row, 18, check.get('remarks', ''))
                     else:
                         if checks:
                             first_check = checks[0]
                             timestamp_str = format_date_str(first_check.get('start_date'))
 
-                            safe_write_cell(ws, 63, 6, first_check.get('qc_name', ''))
+                            safe_write_cell(ws, 63, 6, first_format_module_names(check.get('qc_name', '')))
                             safe_write_cell(ws, 63, 10, timestamp_str)
 
                         for idx, check in enumerate(checks):
@@ -419,8 +428,8 @@ def generate_battery_excel_bytes(battery_pack_id: str) -> Optional[bytes]:
                     safe_write_cell(ws, row, 13, check.get('module_y', ''), font=STANDARD_FONT)
                     safe_write_cell(ws, row, 14, start_date_str)
                     safe_write_cell(ws, row, 15, end_date_str)
-                    safe_write_cell(ws, row, 16, check.get('technician_name', ''))
-                    safe_write_cell(ws, row, 17, check.get('qc_name', ''))
+                    safe_write_cell(ws, row, 16, format_module_names(check.get('technician_name', '')))
+                    safe_write_cell(ws, row, 17, format_module_names(check.get('qc_name', '')))
                     safe_write_cell(ws, row, 18, check.get('remarks', ''))
 
             elif process_type == "pack":
@@ -434,7 +443,7 @@ def generate_battery_excel_bytes(battery_pack_id: str) -> Optional[bytes]:
 
                     safe_write_cell(ws, row, 12, pack_result, font=STANDARD_FONT)
                     safe_write_cell(ws, row, 14, timestamp_str)
-                    safe_write_cell(ws, row, 16, check.get('technician_name', ''))
+                    safe_write_cell(ws, row, 16, format_module_names(check.get('technician_name', '')))
                     safe_write_cell(ws, row, 18, check.get('remarks', ''))
 
             elif process_type == "dispatch":
@@ -449,13 +458,13 @@ def generate_battery_excel_bytes(battery_pack_id: str) -> Optional[bytes]:
 
                     safe_write_cell(ws, row, 12, result, font=STANDARD_FONT)
                     safe_write_cell(ws, row, 14, timestamp_str)
-                    safe_write_cell(ws, row, 16, check.get('technician_name', ''))
+                    safe_write_cell(ws, row, 16, format_module_names(check.get('technician_name', '')))
                     safe_write_cell(ws, row, 18, check.get('remarks', ''))
                 else:
                     if checks:
                         first_check = checks[0]
                         timestamp_str = format_date_str(first_check.get('start_date'))
-                        safe_write_cell(ws, 63, 6, first_check.get('qc_name', ''))
+                        safe_write_cell(ws, 63, 6, first_format_module_names(check.get('qc_name', '')))
                         safe_write_cell(ws, 63, 10, timestamp_str)
 
                     for idx, check in enumerate(checks):
@@ -544,8 +553,8 @@ def generate_all_reports_excel_bytes() -> Optional[bytes]:
                         safe_write_cell(ws, row, 13, check.get('module_y', ''), font=STANDARD_FONT)
                         safe_write_cell(ws, row, 14, start_date_str)
                         safe_write_cell(ws, row, 15, end_date_str)
-                        safe_write_cell(ws, row, 16, check.get('technician_name', ''))
-                        safe_write_cell(ws, row, 17, check.get('qc_name', ''))
+                        safe_write_cell(ws, row, 16, format_module_names(check.get('technician_name', '')))
+                        safe_write_cell(ws, row, 17, format_module_names(check.get('qc_name', '')))
                         safe_write_cell(ws, row, 18, check.get('remarks', ''))
 
                 elif process_type == "pack":
@@ -559,7 +568,7 @@ def generate_all_reports_excel_bytes() -> Optional[bytes]:
 
                         safe_write_cell(ws, row, 12, pack_result, font=STANDARD_FONT)
                         safe_write_cell(ws, row, 14, timestamp_str)
-                        safe_write_cell(ws, row, 16, check.get('technician_name', ''))
+                        safe_write_cell(ws, row, 16, format_module_names(check.get('technician_name', '')))
                         safe_write_cell(ws, row, 18, check.get('remarks', ''))
 
                 elif process_type == "dispatch":
@@ -574,13 +583,13 @@ def generate_all_reports_excel_bytes() -> Optional[bytes]:
 
                         safe_write_cell(ws, row, 12, result, font=STANDARD_FONT)
                         safe_write_cell(ws, row, 14, timestamp_str)
-                        safe_write_cell(ws, row, 16, check.get('technician_name', ''))
+                        safe_write_cell(ws, row, 16, format_module_names(check.get('technician_name', '')))
                         safe_write_cell(ws, row, 18, check.get('remarks', ''))
                     else:
                         if checks:
                             first_check = checks[0]
                             timestamp_str = format_date_str(first_check.get('start_date'))
-                            safe_write_cell(ws, 63, 6, first_check.get('qc_name', ''))
+                            safe_write_cell(ws, 63, 6, first_format_module_names(check.get('qc_name', '')))
                             safe_write_cell(ws, 63, 10, timestamp_str)
 
                         for idx, check in enumerate(checks):
