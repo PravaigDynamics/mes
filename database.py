@@ -281,6 +281,8 @@ def save_qc_checks(pack_id: str, process_name: str, technician_name: str,
             # Per-check technician/QC names, falling back to process-level params
             check_technician = check.get('technician_name', '') or technician_name
             check_qc = check.get('qc_name', '') or qc_name
+            # Per-check remarks, falling back to process-level remarks param
+            check_remarks = check.get('remarks', '') or remarks
 
             # Check if this check already exists
             if is_postgres:
@@ -321,7 +323,7 @@ def save_qc_checks(pack_id: str, process_name: str, technician_name: str,
                             end_date = %s, updated_at = %s
                         WHERE id = %s
                     """, (final_module_x, final_module_y, check_technician, check_qc,
-                          remarks, check_end_date, timestamp, row_id))
+                          check_remarks, check_end_date, timestamp, row_id))
                 else:
                     cur.execute("""
                         UPDATE qc_checks
@@ -330,7 +332,7 @@ def save_qc_checks(pack_id: str, process_name: str, technician_name: str,
                             end_date = ?, updated_at = ?
                         WHERE id = ?
                     """, (final_module_x, final_module_y, check_technician, check_qc,
-                          remarks, check_end_date, timestamp, row_id))
+                          check_remarks, check_end_date, timestamp, row_id))
 
                 logger.debug(f"Updated check '{check_name}' - Module X: '{final_module_x}', Module Y: '{final_module_y}', auto-complete: {check_is_complete}")
 
@@ -348,7 +350,7 @@ def save_qc_checks(pack_id: str, process_name: str, technician_name: str,
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """, (pack_id, process_name, check_name,
                           module_x_value, module_y_value,
-                          check_technician, check_qc, remarks,
+                          check_technician, check_qc, check_remarks,
                           timestamp, check_end_date, timestamp, timestamp))
                 else:
                     cur.execute("""
@@ -358,7 +360,7 @@ def save_qc_checks(pack_id: str, process_name: str, technician_name: str,
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (pack_id, process_name, check_name,
                           module_x_value, module_y_value,
-                          check_technician, check_qc, remarks,
+                          check_technician, check_qc, check_remarks,
                           timestamp, check_end_date, timestamp, timestamp))
 
                 logger.debug(f"Inserted new check '{check_name}' - Module X: '{module_x_value}', Module Y: '{module_y_value}', auto-complete: {check_is_complete}")

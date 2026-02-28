@@ -1212,23 +1212,21 @@ def render_data_entry_tab():
 
     # Load existing data if available
     existing_data = {}
-    existing_remarks = ""
 
     if process_status['has_any_data']:
         try:
             checks = cached_get_qc_checks(battery_pack_id, process_name)
 
             if checks:
-                existing_remarks = checks[0].get('remarks', '')
-
-                # Build existing data dict with per-check technician/QC names
+                # Build existing data dict with per-check technician/QC names and remarks
                 for check in checks:
                     check_name = check.get('check_name', '')
                     existing_data[check_name] = {
                         'module_x': check.get('module_x', ''),
                         'module_y': check.get('module_y', ''),
                         'technician_name': check.get('technician_name', ''),
-                        'qc_name': check.get('qc_name', '')
+                        'qc_name': check.get('qc_name', ''),
+                        'remarks': check.get('remarks', '')
                     }
         except Exception as e:
             logger.error(f"Error loading existing data: {e}")
@@ -1238,15 +1236,6 @@ def render_data_entry_tab():
     # Data Entry Form
     st.markdown(f"### Process: {process_name}")
     st.caption(process_def.get('work_description', ''))
-
-    # Remarks (process-level)
-    remarks = st.text_area(
-        "Remarks (Optional)",
-        value=existing_remarks,
-        key="remarks",
-        placeholder="Additional notes or observations",
-        height=100
-    )
 
     st.markdown("---")
 
@@ -1321,12 +1310,22 @@ def render_data_entry_tab():
                 horizontal=True
             )
 
-        if module_x or module_y:
+        existing_remarks_for_check = existing_check.get('remarks', '')
+        check_remarks = st.text_area(
+            "Remarks (Optional)",
+            value=existing_remarks_for_check,
+            key=f"remarks_{idx}_{check_key}",
+            placeholder="Notes for this check",
+            height=68
+        )
+
+        if module_x or module_y or check_remarks.strip():
             checks_data[check_name] = {
                 "module_x": module_x if module_x else "",
                 "module_y": module_y if module_y else "",
                 "technician_name": check_technician.strip() if check_technician else "",
-                "qc_name": check_qc_name.strip() if check_qc_name else ""
+                "qc_name": check_qc_name.strip() if check_qc_name else "",
+                "remarks": check_remarks.strip()
             }
 
     st.markdown("---")
@@ -1356,9 +1355,12 @@ def render_data_entry_tab():
                 st.error(f"QC inspector name too long for check '{check_name_key}' (max 100 characters)")
                 return
 
-        if remarks and len(remarks) > 500:
-            st.error("Remarks too long (max 500 characters)")
-            return
+        # Per-check remarks length validation
+        for check_name_key, check_values in checks_data.items():
+            r = check_values.get('remarks', '')
+            if r and len(r) > 500:
+                st.error(f"Remarks too long for check '{check_name_key}' (max 500 characters)")
+                return
 
         if not checks_data:
             st.error("Please complete at least one QC check")
@@ -1374,7 +1376,8 @@ def render_data_entry_tab():
                         'module_x': check_values['module_x'],
                         'module_y': check_values['module_y'],
                         'technician_name': check_values.get('technician_name', ''),
-                        'qc_name': check_values.get('qc_name', '')
+                        'qc_name': check_values.get('qc_name', ''),
+                        'remarks': check_values.get('remarks', '')
                     })
 
                 output_file = add_detailed_entry(
@@ -1382,7 +1385,7 @@ def render_data_entry_tab():
                     process_name=process_name,
                     technician_name="",
                     qc_name="",
-                    remarks=remarks,
+                    remarks="",
                     checks=checks_list
                 )
 
@@ -1398,7 +1401,7 @@ def render_data_entry_tab():
                 if 'edit_mode' in st.session_state:
                     del st.session_state['edit_mode']
                 for key in list(st.session_state.keys()):
-                    if key.startswith('check_') or key.startswith('tech_') or key.startswith('qc_'):
+                    if key.startswith('check_') or key.startswith('tech_') or key.startswith('qc_') or key.startswith('remarks_'):
                         del st.session_state[key]
 
                 if st.button("Enter Next Pack", key="scan_next"):
