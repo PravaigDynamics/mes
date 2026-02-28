@@ -12,7 +12,7 @@ from datetime import datetime
 import logging
 from typing import Optional
 import io
-from database import get_qc_checks, get_all_battery_packs
+from database import get_qc_checks, get_all_battery_packs, get_battery_pack_info
 
 # Standard font to override Wingdings in template (columns L/M use Wingdings which breaks WPS Office)
 STANDARD_FONT = Font(name='Arial', size=10)
@@ -98,6 +98,10 @@ def generate_battery_excel(battery_pack_id: str) -> Optional[Path]:
 
         # Write Battery Pack ID to cell J6 (exactly as before)
         safe_write_cell(ws, 6, 10, battery_pack_id)
+
+        # Write "Pack: XX  Module: SN1 & SN2" to cell P6
+        _pi = get_battery_pack_info(battery_pack_id)
+        safe_write_cell(ws, 6, 16, f"Pack: {battery_pack_id}  Module: {_pi.get('module_sn1','')} & {_pi.get('module_sn2','')}")
 
         # Get all QC checks for this battery pack from database
         all_checks = get_qc_checks(battery_pack_id)
@@ -246,6 +250,10 @@ def generate_master_excel() -> Optional[Path]:
             # Write Battery Pack ID
             safe_write_cell(ws, 6, 10, battery_id)
 
+            # Write "Pack: XX  Module: SN1 & SN2" to cell P6
+            _pi = get_battery_pack_info(battery_id)
+            safe_write_cell(ws, 6, 16, f"Pack: {battery_id}  Module: {_pi.get('module_sn1','')} & {_pi.get('module_sn2','')}")
+
             # Get all QC checks for this battery pack
             all_checks = get_qc_checks(battery_id)
 
@@ -375,6 +383,10 @@ def generate_battery_excel_bytes(battery_pack_id: str) -> Optional[bytes]:
         # Write Battery Pack ID
         safe_write_cell(ws, 6, 10, battery_pack_id)
 
+        # Write "Pack: XX  Module: SN1 & SN2" to cell P6
+        _pi = get_battery_pack_info(battery_pack_id)
+        safe_write_cell(ws, 6, 16, f"Pack: {battery_pack_id}  Module: {_pi.get('module_sn1','')} & {_pi.get('module_sn2','')}")
+
         # Get all QC checks for this battery pack
         all_checks = get_qc_checks(battery_pack_id)
 
@@ -495,6 +507,10 @@ def generate_all_reports_excel_bytes() -> Optional[bytes]:
 
             # Write Battery Pack ID
             safe_write_cell(ws, 6, 10, battery_id)
+
+            # Write "Pack: XX  Module: SN1 & SN2" to cell P6
+            _pi = get_battery_pack_info(battery_id)
+            safe_write_cell(ws, 6, 16, f"Pack: {battery_id}  Module: {_pi.get('module_sn1','')} & {_pi.get('module_sn2','')}")
 
             # Get all QC checks for this battery pack
             all_checks = get_qc_checks(battery_id)

@@ -200,6 +200,20 @@ def init_database():
             CREATE INDEX IF NOT EXISTS idx_qc_pack_process ON qc_checks(pack_id, process_name)
         """)
 
+        # Migration: add module_sn1/sn2 columns to battery_packs if not already present
+        if is_postgres:
+            for col in ['module_sn1', 'module_sn2']:
+                try:
+                    cur.execute(f"ALTER TABLE battery_packs ADD COLUMN {col} VARCHAR(100) DEFAULT ''")
+                except Exception:
+                    pass  # column already exists
+        else:
+            for col in ['module_sn1', 'module_sn2']:
+                try:
+                    cur.execute(f"ALTER TABLE battery_packs ADD COLUMN {col} VARCHAR(100) DEFAULT ''")
+                except Exception:
+                    pass  # column already exists
+
         conn.commit()
         logger.info(f"Database initialized ({'PostgreSQL' if is_postgres else 'SQLite'})")
 
@@ -212,8 +226,9 @@ def init_database():
 
 
 @retry_on_db_lock
-def save_battery_pack(pack_id: str) -> bool:
-    """Create or update battery pack record with retry on lock"""
+def save_battery_pack(pack_id: str, module_sn1: str = '', module_sn2: str = '') -> bool:
+    """Create or update battery pack record with retry on lock.
+    module_sn1/sn2 are only updated when non-empty (merge logic)."""
     conn = get_connection()
     db_url = get_database_url()
     is_postgres = db_url.startswith('postgres')
@@ -224,16 +239,32 @@ def save_battery_pack(pack_id: str) -> bool:
 
         if is_postgres:
             cur.execute("""
-                INSERT INTO battery_packs (pack_id, created_at, updated_at)
-                VALUES (%s, %s, %s)
+                INSERT INTO battery_packs (pack_id, module_sn1, module_sn2, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s)
                 ON CONFLICT (pack_id)
-                DO UPDATE SET updated_at = %s
-            """, (pack_id, timestamp, timestamp, timestamp))
+                DO UPDATE SET
+                    updated_at = %s,
+                    module_sn1 = CASE WHEN %s != '' THEN %s ELSE battery_packs.module_sn1 END,
+                    module_sn2 = CASE WHEN %s != '' THEN %s ELSE battery_packs.module_sn2 END
+            """, (pack_id, module_sn1, module_sn2, timestamp, timestamp,
+                  timestamp, module_sn1, module_sn1, module_sn2, module_sn2))
         else:
+            # SQLite: INSERT OR IGNORE to create if new, then UPDATE SNs if provided
             cur.execute("""
-                INSERT OR REPLACE INTO battery_packs (pack_id, created_at, updated_at)
-                VALUES (?, ?, ?)
-            """, (pack_id, timestamp, timestamp))
+                INSERT OR IGNORE INTO battery_packs (pack_id, module_sn1, module_sn2, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (pack_id, module_sn1, module_sn2, timestamp, timestamp))
+            if module_sn1 or module_sn2:
+                cur.execute("""
+                    UPDATE battery_packs SET
+                        updated_at = ?,
+                        module_sn1 = CASE WHEN ? != '' THEN ? ELSE module_sn1 END,
+                        module_sn2 = CASE WHEN ? != '' THEN ? ELSE module_sn2 END
+                    WHERE pack_id = ?
+                """, (timestamp, module_sn1, module_sn1, module_sn2, module_sn2, pack_id))
+            else:
+                cur.execute("UPDATE battery_packs SET updated_at = ? WHERE pack_id = ?",
+                            (timestamp, pack_id))
 
         conn.commit()
         logger.debug(f"Saved battery pack: {pack_id}")
@@ -243,6 +274,34 @@ def save_battery_pack(pack_id: str) -> bool:
         logger.error(f"Error saving battery pack {pack_id}: {e}")
         conn.rollback()
         return False
+    finally:
+        release_connection(conn)
+
+
+def get_battery_pack_info(pack_id: str) -> dict:
+    """Return battery pack info including module serial numbers."""
+    conn = get_connection()
+    db_url = get_database_url()
+    is_postgres = db_url.startswith('postgres')
+    try:
+        cur = conn.cursor()
+        if is_postgres:
+            cur.execute(
+                "SELECT pack_id, module_sn1, module_sn2 FROM battery_packs WHERE pack_id = %s LIMIT 1",
+                (pack_id,)
+            )
+        else:
+            cur.execute(
+                "SELECT pack_id, module_sn1, module_sn2 FROM battery_packs WHERE pack_id = ? LIMIT 1",
+                (pack_id,)
+            )
+        row = cur.fetchone()
+        if row:
+            return {'pack_id': row[0], 'module_sn1': row[1] or '', 'module_sn2': row[2] or ''}
+        return {'pack_id': pack_id, 'module_sn1': '', 'module_sn2': ''}
+    except Exception as e:
+        logger.error(f"Error fetching battery pack info for {pack_id}: {e}")
+        return {'pack_id': pack_id, 'module_sn1': '', 'module_sn2': ''}
     finally:
         release_connection(conn)
 

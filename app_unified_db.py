@@ -33,7 +33,8 @@ load_dotenv()
 from database import (
     init_database, save_qc_checks,
     check_process_status, battery_pack_exists, get_all_battery_packs,
-    get_qc_checks, get_dashboard_status, get_not_ok_checks
+    get_qc_checks, get_dashboard_status, get_not_ok_checks,
+    save_battery_pack, get_battery_pack_info
 )
 from excel_generator import (
     generate_battery_excel, generate_master_excel, update_excel_after_entry,
@@ -1116,6 +1117,30 @@ def render_data_entry_tab():
         st.session_state['camera_scanner_open'] = False
         st.session_state['barcode_scanner_open'] = False
         st.rerun()
+
+    st.markdown("---")
+
+    # Module Serial Numbers
+    st.markdown("### Module Serial Numbers")
+    _pack_info = get_battery_pack_info(battery_pack_id)
+    col_sn1, col_sn2 = st.columns(2)
+    with col_sn1:
+        module_sn1_val = st.text_input(
+            "Module 1 Serial No.",
+            value=_pack_info.get('module_sn1', ''),
+            key="module_sn1",
+            placeholder="e.g. M-001"
+        )
+    with col_sn2:
+        module_sn2_val = st.text_input(
+            "Module 2 Serial No.",
+            value=_pack_info.get('module_sn2', ''),
+            key="module_sn2",
+            placeholder="e.g. M-002"
+        )
+    if st.button("Save Module SNs", key="save_sn"):
+        save_battery_pack(battery_pack_id, module_sn1_val.strip(), module_sn2_val.strip())
+        st.success(f"Module SNs saved: {module_sn1_val.strip()} & {module_sn2_val.strip()}")
 
     st.markdown("---")
 
