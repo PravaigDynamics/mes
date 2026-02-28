@@ -1140,6 +1140,7 @@ def render_data_entry_tab():
         )
     if st.button("Save Module SNs", key="save_sn"):
         save_battery_pack(battery_pack_id, module_sn1_val.strip(), module_sn2_val.strip())
+        clear_data_caches()  # force Excel to regenerate with new SNs
         st.success(f"Module SNs saved: {module_sn1_val.strip()} & {module_sn2_val.strip()}")
 
     st.markdown("---")
