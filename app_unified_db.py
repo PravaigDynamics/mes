@@ -57,77 +57,168 @@ try:
 except Exception as e:
     logger.error(f"Database initialization failed: {e}")
 
-# Process definitions - Updated with actual QC checks from template
+# Process definitions - Synced with template.xlsx (source of truth)
 PROCESS_DEFINITIONS = {
-    "Cell sorting": {
+    "Cell Sorting": {
         "qc_checks": [
-            "Acceptable range Voltage: 3.58 to 3.6 V, IR: 11.5 to 12.5 mΩ",
-            "Jig setup on the flat surface",
-            "Visual & spacing inspection"
+            "1.1.1 Acceptable range Voltage : 3.58 to 3.6 V, IR : 11.5 to 12.5 mΩ",
+            "1.2.1 Jig setup on the flat surface",
+            "1.2.2 Visual & spacing inspection",
+            "1.2.3 No moisture, dust on the cell surface (no contaminations) - IP clean",
+        ],
+        "acceptance_criteria": [
+            "Nominal Voltage within 3.58–3.6 V (20 mV) & IR : 11.5–12.5 mΩ",
+            "Flatness ≤0.2 mm. No wobble or movement during assembly",
+            "All cells aligned as per design. No dents/scratches. Adhesive thickness 400 microns, cell-to-cell gap maintained",
+            "Surfaces free from dust, fibers, particles, oil, grease, or foreign substances on cells or jig",
         ]
     },
-    "Module assembly": {
+    "Module Assembly": {
         "qc_checks": [
-            "Aluminum base plate fixing in Base plate fixture & stitch nut",
-            "Adhesive dispensing on cells placed in the jig & lio of cell assembly jig on baseplate fixture after curing",
-            "Dispensing the cell assembly jig & fixture",
-            "Fixing of Downwell (PC sheets) in the cell assembly",
-            "Thermistor & voltage tagging on Cell assembly(Routing & Placement)",
-            "Busbar fitment on CPT (adhesive dispensing & voltage tap,thermistor sub assembly)"
+            "2.1.1 Proper fitment to the Base plate fixture and base plate orientation",
+            "2.1.2 Clinch/all rivets perpendicular to the plate & proper clinch",
+            "2.2.1 Volume consistency",
+            "2.2.2 Coverage in space/gap",
+            "2.2.3 Jig alignment correction",
+            "2.2.4 Cure and bond integrity - 2 hrs. adhesive curing after cell flip",
+            "2.3.1 Cell continuity check & visual check on cell fitment, Cell Height (72.6 mm) from base plate after dismantling fixture",
+            "2.3.2 Cleanliness inspection",
+            "2.4.1 Even fix of sidewall (PC sheets) on all four sides without gaps, proper dimension 72.5 mm × 239.4 mm",
+            "2.5.1 Placement as per drawing & wire routings (Thermistor - 7 nos / Voltage harness - 14 nos)",
+            "2.5.2 Secure adhesion & positioning with thermal adhesive",
+            "2.5.3 No insulation damage or routing faults (Visual + routing diagram comparison)",
+            "2.6.1 Busbar fitment as per drawings, Curing time 1 hr.",
+            "2.6.2 Busbar placement & defect absence",
+            "2.6.3 Adhesive coverage - Ensure full bond",
+            "2.6.4 Adhesion strength",
+            "2.6.5 Busbar and CPT sub-assembly dim (Ht 22.2 mm from the base)",
+        ],
+        "acceptance_criteria": [
+            "Battery pack sits flush; no gaps or misalignment; locking features engage properly and not wobble",
+            "Rivets: no bending/cracking; rivet heads flush with surface; clinch depth meets design specs",
+            "Volume within ±10% of spec (400–600 microns); no spill/insufficient bond. Dielectric strength 19.0 kV/mm",
+            "Uniform spread & no voids",
+            "Proper jig positioning & no misalignment",
+            "No cracks, bubbles, or discoloration in cured adhesive",
+            "No continuity; cell in nominal voltage. Height 72.6 mm ± 0.15 mm from base plate (all cells)",
+            "Cell surfaces free from dust, moisture, oil, or any foreign particles",
+            "No warping/bending/uneven spacing. Dim Tol: 72.5 mm ±0.15 mm × 239.4 mm (±0.20–0.30)",
+            "Thermistors 15 mm from top of cell; Voltage Harness orientation & positioning correct",
+            "Firm fixation & no loose ends",
+            "No cuts/abrasions/exposed conductors; wires not pinched/twisted/routed over sharp edges",
+            "As per drawing; orientation & alignment correct; busbar undisturbed during curing",
+            "Busbar free from bends, warping, or surface damage",
+            "Full coverage; even thickness (200 micron); no overflow/underfill. Dielectric strength 19.0 kV/mm. Full cure in 2–3 hrs at 25°C",
+            "Manual pull/peel should not cause detachment without damaging substrate",
+            "Tolerance: 22.2 mm ± 0.10 mm",
         ]
     },
-    "Pre Encapsulation": {
+    "Encapsulation & Soldering - Phase 1": {
         "qc_checks": [
-            "The 90 % of encapsulation on module by tightening the module independently using the holding fixture",
-            "Bus bar top assembly placement and Soldering of voltage taps on the cells",
-            "Stripping crimping & connector insertion for voltage tap and thermistor"
+            "3.1.1 No encapsulant leakage from sidewalls. Curing time 2 hr @ room temperature ~25°C",
+            "3.1.2 Dimensions: L 410.3 × W 239.4 mm",
+            "3.2.1 Busbar + CPT module assembly dim (Ht 78 mm from the base)",
+            "3.2.2 Soldering check & Voltage of module level (soft soldering of voltage taps on cell positive surface)",
+            "3.3.1 Proper Stripping, crimping & connector insertion for voltage tap and thermistor",
+        ],
+        "acceptance_criteria": [
+            "Encapsulant fills 75–85% of cavity height uniformly; no leakage from side walls or joints",
+            "Outer casing dimensions post-potting within ±0.50 to 1.50 mm of original",
+            "Tolerance: 78 mm ± 0.15 mm",
+            "Solder flows and wets both pad and lead; no excessive solder; each tap outputs correct voltage; no continuity present",
+            "Firmly bonded; no loose strands/misalignment/broken housing; no insulation debris; labels clearly visible; no disconnect under light pull test",
         ]
     },
     "Wire Bonding": {
         "qc_checks": [
-            "As per the cell assembly procedure"
+            "4.1.1 The 4 bonds on each cell as per the drawing, module voltage & continuity (no continuity present)",
+        ],
+        "acceptance_criteria": [
+            "Smooth loop; loop height ≤1 mm from bus bar; no bond lift/broken during normal handling; double bonds per terminal; all bonded connections pass continuity test",
         ]
     },
-    "Post Encapsulation": {
+    "Encapsulation Phase II (100%)": {
         "qc_checks": [
-            "The remaining 20 % of encapsulation on wire bonded module",
-            "Dimensions of the part"
+            "5.1.1 Equal distribution of encapsulant on the module (4 hrs. curing)",
+            "5.2.1 Dimensions: H 78.6 × L 410.3 × W 239.4 mm",
+        ],
+        "acceptance_criteria": [
+            "All internal components, pins, wires, and solder joints must be fully embedded",
+            "Final fill height within ±1 mm of designed enclosure height (no overfilling)",
+        ]
+    },
+    "Module QC Checks": {
+        "qc_checks": [
+            "6.1.1 Check for Spec: a) Weight 17 Kg  b) Module Voltage 50 V  c) Continuity: Not present  d) Module Height: 78.6 mm. Encapsulation & Final module visual checks, Floating Voltage & Isolation",
+        ],
+        "acceptance_criteria": [
+            "a) Weight 17 ± 0.500 Kg  b) Module Voltage difference 100–150 mV  c) Continuity: Not present  d) Module Height: 78.6 mm ± 0.15 mm. Surface level/smooth/tack-free after curing; final fill within ±1 mm; potting seals wire outlets",
         ]
     },
     "EOL Testing": {
         "qc_checks": [
-            "Check for Abnormal temp & voltages and cell imbalance, Isolation resistance (EOL: 300 amp charge and discharge)"
+            "7.1.1 Check for Abnormal temp & voltages and cell imbalance, Isolation resistance (EOL: 300 amp charge and discharge)",
+        ],
+        "acceptance_criteria": [
+            "Isolation resistance min 10 MΩ per module before CDC; no continuity. 0.3C DChg, 0.5C Chg, 4C DChg pulse; compliance with all EOL testing criteria including capacity, temperature, and sensor accuracy",
         ]
     },
-    "Pack assembly": {
+    "Pack Assembly": {
         "qc_checks": [
-            "Pack Assembly(Mock fitment of module 1 & 2 in base plate enclosure)",
-            "Fitment of module 1 & module 2between MSM sandwich bodies on the base plate with sealant and screw with M6 allen head",
-            "Assembly of base plates (left & flame arrester sizes (M3) with sealant /foam and M6)",
-            "Assembly of busbar series with UX Allen head",
-            "Cell box top cover assembly- PCB joining ;PRV assembly; busbar/array & cleanliness",
-            "Final QC on the pack level with CTQs",
-            "Sealing- PCB, Overall Pack Body & Terminals",
-            "Overall aesthetics/cleanliness of the pack",
-            "Pre-casing torque check and paint marking (M4 socket head)",
-            "Leak test (Pressure test) (chaser/Fixer)",
-            "Labelling of the battery pack",
-            "Torque checks & torque marking",
-            "Sealing - PCB, Overall Pack Body & Terminals)",
-            "Overall aesthetics/cleanliness of the pack",
-            "Pre-casing torque check and paint marking (M4 socket head)",
-            "Leak test (Pressure test) (chaser/Fixer)",
-            "Labelling of the battery pack",
-            "Torque checks & torque marking",
-            "Hard leakage to body - Shouldn't present",
-            "Voltage and thermaltor readings with respect to PREVAID BMS (PCB communications - voltage + temperature)",
-            "Hard leakage to body: Shouldn't present",
-            "Isolation resistance: Min in Mohm"
+            "8.1.1 Check whether PRV nut interfering",
+            "8.2.1 Check sealant applied uniformly & MSM gap maintained between two modules (11.2 mm)",
+            "8.3.1 Check sealant application and side foam in fire arrestor. Check width 168.4 mm & leak check",
+            "8.4.1 Torque check @ M4 Allen head",
+            "8.5.1 No gaps allowed / proper fitment check. PRV: M5 - 1 Nm",
+            "8.6.1 Terminal Placement verification with Jig",
+            "8.6.2 PCB Placement verification with Jig",
+            "8.6.3 Stud Placement and weld check with Jig",
+            "8.6.4 Mounting point alignment (Heatsink) with Jig",
+            "8.6.5 Pack dimensions (430 × 168.4 × 301.35 mm) check",
+            "8.6.6 Torque checks & torque marking",
+            "8.6.7 Flatness ≤ 0.5 mm",
+            "8.6.8 Sealing - PCB, Overall Pack Body & Terminals",
+            "8.6.9 Overall aesthetics/cleanliness of the pack",
+            "8.6.10 Top casing torque check and paint marking (M4 socket head)",
+            "8.6.11 Leak test / Pressure test (Passed/Failed)",
+            "8.6.12 Pack weight (CAD Wt.: 38 Kg)",
+            "8.7.1 Pack voltage: 100 V Nominal",
+            "8.7.2 Isolation resistance: Min in MΩ",
+            "8.7.3 Hard leakage to body - Shouldn't present",
+            "8.7.4 Voltage taps and thermistor readings with respect to PRAVAIG BMS (PCB communications: voltage + temperature)",
+            "8.7.5 Hard leakage to body - Shouldn't present (after bench drop test ~20°)",
+        ],
+        "acceptance_criteria": [
+            "Module 1 & 2 sit flush; no tilt or gap >0.5 mm; bolt holes/studs align ±0.5 mm; no connectors/harnesses rubbing enclosure; PRV nut torques freely to full spec",
+            "Tolerance: ±0.10 to 0.15 mm",
+            "Foam seated evenly without compression loss; sealant continuous with no gaps; M6: 6.5–7.0 Nm, M5: 3–3.5 Nm; assembled width 168.4 mm ± 0.2 mm",
+            "M4: 1.5 Nm ± 0.1 Nm; proper alignment with terminal pads; no oxidation/oil/dust on contact area",
+            "Cover flush; no warpage/scratches/dents; PRV: M5 torqued to 1.0 Nm ± 0.1 Nm; clean, free from smudges/sealant spills/loose parts",
+            "Should match acceptance jig for alignment (terminal hole matches busbar)",
+            "Should match acceptance jig for alignment",
+            "Match jig; 90° ± 1° perpendicular to base; no thread damage (M5); no cracks/undercuts/pinholes",
+            "Should match acceptance jig for alignment",
+            "Tolerance: ±0.40 to 0.60 mm",
+            "M6: 6.5–7.0 Nm, M5: 3–3.5 Nm, M4: 1.5 Nm ±0.1 Nm, M3: 0.5–0.6 Nm, PRV M5: 1 Nm",
+            "Tolerance: ±0.1 mm",
+            "Full coverage; no gaps/voids along PCB edge or housing boundary; fasteners must NOT be sealed with sealant",
+            "Dust/particle free; no sealant overflow/oil/grease residue; top cover/side plates/connectors flush ±0.5 mm; all fasteners present and fixed",
+            "M4: 1.5 Nm ± 0.1 Nm with torque wrench",
+            "Terminal glands, casing joints, PRV leak-free after 3 psi applied; pack must hold 3 psi",
+            "Acceptable weight range: 37.5 kg – 38.5 kg",
+            "98 V to 100 V",
+            "Min 10 MΩ (-ve to casing body & +ve to casing body)",
+            "No continuity present",
+            "28 voltage taps verified: 100–150 mV; 11 thermistor readings verified",
+            "No continuity present",
         ]
     },
     "Ready for Dispatch": {
         "qc_checks": [
-            "Overall pack visual inspection: No defects/no dents/no stains, HV terminals covered, PCB covered, PRV placed, labels verified"
+            "9.1 Overall pack visual inspection: No defects/no dents/no stains. HV terminals covered with Kapton, PCB covered, PRV placed and covered, product labels, warning labels, +ve & -ve terminal labels, manufacturing date and QC decals placed. (SOC % before dispatch ≤30%)",
+        ],
+        "acceptance_criteria": [
+            "All inspection criteria met; labels verified; SOC ≤30% confirmed before dispatch",
         ]
     }
 }
@@ -135,14 +226,15 @@ PROCESS_DEFINITIONS = {
 # Row mapping for Excel sheet
 # Maps process name to starting row and column configuration
 PROCESS_ROW_MAPPING = {
-    "Cell sorting": {"start_row": 8, "type": "standard"},  # Processes 1-7
-    "Module assembly": {"start_row": 11, "type": "standard"},
-    "Pre Encapsulation": {"start_row": 14, "type": "standard"},
-    "Wire Bonding": {"start_row": 17, "type": "standard"},
-    "Post Encapsulation": {"start_row": 20, "type": "standard"},
+    "Cell Sorting": {"start_row": 8, "type": "standard"},
+    "Module Assembly": {"start_row": 12, "type": "standard"},
+    "Encapsulation & Soldering - Phase 1": {"start_row": 29, "type": "standard"},
+    "Wire Bonding": {"start_row": 34, "type": "standard"},
+    "Encapsulation Phase II (100%)": {"start_row": 35, "type": "standard"},
+    "Module QC Checks": {"start_row": 37, "type": "standard"},
     "EOL Testing": {"start_row": 38, "type": "standard"},
-    "Pack assembly": {"start_row": 40, "type": "pack"},  # Process 8
-    "Ready for Dispatch": {"start_row": 62, "type": "dispatch"}  # Processes 9-10
+    "Pack Assembly": {"start_row": 40, "type": "pack"},
+    "Ready for Dispatch": {"start_row": 62, "type": "dispatch"}
 }
 
 # Helper Functions
@@ -1289,6 +1381,10 @@ def render_data_entry_tab():
             <div class="card-header"{header_style}>{status_icon} Check {idx+1}: {check_name}{done_label}</div>
         </div>
         """, unsafe_allow_html=True)
+        # Show acceptance criteria as reference text
+        ac_list = process_def.get('acceptance_criteria', [])
+        if idx < len(ac_list) and ac_list[idx]:
+            st.caption(f"✓ Acceptance Criteria: {ac_list[idx]}")
         existing_module_x = existing_check.get('module_x', '')
         existing_module_y = existing_check.get('module_y', '')
         existing_tech = existing_check.get('technician_name', '')
@@ -1669,8 +1765,11 @@ def render_dashboard_tab():
         st.markdown("### Battery Pack Tracker")
 
         tracker_data = []
-        process_stages = ["Cell sorting", "Module assembly", "Pre Encapsulation", "Wire Bonding",
-                         "Post Encapsulation", "EOL Testing", "Pack assembly", "Ready for Dispatch"]
+        process_stages = [
+            "Cell Sorting", "Module Assembly", "Encapsulation & Soldering - Phase 1",
+            "Wire Bonding", "Encapsulation Phase II (100%)", "Module QC Checks",
+            "EOL Testing", "Pack Assembly", "Ready for Dispatch"
+        ]
 
         # Get all battery packs from database (cached)
         all_packs = cached_get_all_battery_packs()
@@ -1728,7 +1827,7 @@ def render_dashboard_tab():
                 # Determine final overall status
                 if has_deviations:
                     row_data["Status"] = "QC Issues"
-                elif qc_ok_count >= 8:
+                elif qc_ok_count >= 9:
                     row_data["Status"] = "Ready to dispatch"
                 elif qc_ok_count > 0 or has_processing:
                     row_data["Status"] = "In Process"

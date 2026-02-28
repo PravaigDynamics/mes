@@ -27,13 +27,14 @@ MASTER_OUTPUT_PATH = Path(__file__).parent / "sample.xlsx"
 
 # Row mapping for Excel sheet - Duplicated here to avoid circular import
 PROCESS_ROW_MAPPING = {
-    "Cell sorting": {"start_row": 8, "type": "standard"},
-    "Module assembly": {"start_row": 11, "type": "standard"},
-    "Pre Encapsulation": {"start_row": 14, "type": "standard"},
-    "Wire Bonding": {"start_row": 17, "type": "standard"},
-    "Post Encapsulation": {"start_row": 20, "type": "standard"},
+    "Cell Sorting": {"start_row": 8, "type": "standard"},
+    "Module Assembly": {"start_row": 12, "type": "standard"},
+    "Encapsulation & Soldering - Phase 1": {"start_row": 29, "type": "standard"},
+    "Wire Bonding": {"start_row": 34, "type": "standard"},
+    "Encapsulation Phase II (100%)": {"start_row": 35, "type": "standard"},
+    "Module QC Checks": {"start_row": 37, "type": "standard"},
     "EOL Testing": {"start_row": 38, "type": "standard"},
-    "Pack assembly": {"start_row": 40, "type": "pack"},
+    "Pack Assembly": {"start_row": 40, "type": "pack"},
     "Ready for Dispatch": {"start_row": 62, "type": "dispatch"}
 }
 
