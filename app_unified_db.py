@@ -1699,7 +1699,7 @@ def render_dashboard_tab():
                     if "NOT OK" in str(module_x) or "NOT OK" in str(module_y):
                         processes_data[process_name]['has_not_ok'] = True
                         processes_data[process_name]['filled'] += 1
-                    elif module_x or module_y:  # OK or N/A — any non-empty value
+                    elif module_x and module_y:  # Both modules must be filled
                         processes_data[process_name]['filled'] += 1
 
                 # Map database processes to display stages
