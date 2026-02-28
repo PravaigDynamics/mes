@@ -39,26 +39,32 @@ PROCESS_ROW_MAPPING = {
 }
 
 
+def _split_names(combined: str) -> list:
+    """Split a name string on ',' or '&', returning stripped non-empty parts."""
+    import re
+    parts = [p.strip() for p in re.split(r'[,&]', combined) if p.strip()]
+    return parts if parts else [combined.strip()]
+
+
 def format_module_names(combined: str) -> str:
     """Convert 'NameX, NameY' → 'Module X: NameX\nModule Y: NameY'.
-    For single name, shows same name for both modules."""
+    For single name, shows same name for both modules.
+    For 3+ names, Module Y shows all names after the first joined by ', '."""
     if not combined or not combined.strip():
         return ''
-    if ',' in combined:
-        parts = combined.split(',', 1)
-        x = parts[0].strip()
-        y = parts[1].strip()
-    else:
-        x = y = combined.strip()
+    parts = _split_names(combined)
+    x = parts[0]
+    y = ', '.join(parts[1:]) if len(parts) > 1 else x
     return f"Module X: {x}\nModule Y: {y}"
 
 
 def first_format_module_names(combined: str) -> str:
-    """Return only the Module X name (first part before comma, or the single name)."""
+    """Return only the Module X name (first part, or the single name)."""
     if not combined or not combined.strip():
         return ''
-    if ',' in combined:
-        return combined.split(',', 1)[0].strip()
+    parts = _split_names(combined)
+    return parts[0]
+
     return combined.strip()
 
 
