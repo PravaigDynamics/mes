@@ -175,7 +175,7 @@ def generate_battery_excel(battery_pack_id: str) -> Optional[Path]:
 
             elif process_type == "pack":
                 # Process 8: Pack Assembly
-                # Columns: L(12), N(14), P(16), R(18)
+                # Columns: L(12), N(14), O(15), P(16), R(18)
                 for idx, check in enumerate(checks):
                     row = start_row + idx
 
@@ -184,10 +184,12 @@ def generate_battery_excel(battery_pack_id: str) -> Optional[Path]:
                     if pack_result == '' or pack_result == 'N/A':
                         pack_result = check.get('module_y', '')
 
-                    timestamp_str = format_date_str(check.get('start_date'))
+                    start_date_str = format_date_str(check.get('start_date'))
+                    end_date_str   = format_date_str(check.get('end_date'))
 
                     safe_write_cell(ws, row, 12, pack_result, font=STANDARD_FONT)   # L: Pack QC Result
-                    safe_write_cell(ws, row, 14, timestamp_str)                     # N: Date
+                    safe_write_cell(ws, row, 14, start_date_str)                    # N: Start date
+                    safe_write_cell(ws, row, 15, end_date_str)                      # O: End date
                     safe_write_cell(ws, row, 16, format_module_names(check.get('technician_name', '')))  # P: Name
                     safe_write_cell(ws, row, 18, check.get('remarks', ''))          # R: Remarks
 
@@ -202,10 +204,12 @@ def generate_battery_excel(battery_pack_id: str) -> Optional[Path]:
                     if result == '' or result == 'N/A':
                         result = check.get('module_y', '')
 
-                    timestamp_str = format_date_str(check.get('start_date'))
+                    start_date_str = format_date_str(check.get('start_date'))
+                    end_date_str   = format_date_str(check.get('end_date'))
 
                     safe_write_cell(ws, row, 12, result, font=STANDARD_FONT)        # L: Result
-                    safe_write_cell(ws, row, 14, timestamp_str)                     # N: Date
+                    safe_write_cell(ws, row, 14, start_date_str)                    # N: Start date
+                    safe_write_cell(ws, row, 15, end_date_str)                      # O: End date
                     safe_write_cell(ws, row, 16, format_module_names(check.get('technician_name', '')))  # P: Name
                     safe_write_cell(ws, row, 18, check.get('remarks', ''))          # R: Remarks
                 else:
@@ -327,10 +331,9 @@ def generate_master_excel() -> Optional[Path]:
                         if pack_result == '' or pack_result == 'N/A':
                             pack_result = check.get('module_y', '')
 
-                        timestamp_str = format_date_str(check.get('start_date'))
-
                         safe_write_cell(ws, row, 12, pack_result, font=STANDARD_FONT)
-                        safe_write_cell(ws, row, 14, timestamp_str)
+                        safe_write_cell(ws, row, 14, format_date_str(check.get('start_date')))
+                        safe_write_cell(ws, row, 15, format_date_str(check.get('end_date')))
                         safe_write_cell(ws, row, 16, format_module_names(check.get('technician_name', '')))
                         safe_write_cell(ws, row, 18, check.get('remarks', ''))
 
@@ -342,10 +345,9 @@ def generate_master_excel() -> Optional[Path]:
                         if result == '' or result == 'N/A':
                             result = check.get('module_y', '')
 
-                        timestamp_str = format_date_str(check.get('start_date'))
-
                         safe_write_cell(ws, row, 12, result, font=STANDARD_FONT)
-                        safe_write_cell(ws, row, 14, timestamp_str)
+                        safe_write_cell(ws, row, 14, format_date_str(check.get('start_date')))
+                        safe_write_cell(ws, row, 15, format_date_str(check.get('end_date')))
                         safe_write_cell(ws, row, 16, format_module_names(check.get('technician_name', '')))
                         safe_write_cell(ws, row, 18, check.get('remarks', ''))
                     else:
@@ -459,10 +461,9 @@ def generate_battery_excel_bytes(battery_pack_id: str) -> Optional[bytes]:
                     if pack_result == '' or pack_result == 'N/A':
                         pack_result = check.get('module_y', '')
 
-                    timestamp_str = format_date_str(check.get('start_date'))
-
                     safe_write_cell(ws, row, 12, pack_result, font=STANDARD_FONT)
-                    safe_write_cell(ws, row, 14, timestamp_str)
+                    safe_write_cell(ws, row, 14, format_date_str(check.get('start_date')))
+                    safe_write_cell(ws, row, 15, format_date_str(check.get('end_date')))
                     safe_write_cell(ws, row, 16, format_module_names(check.get('technician_name', '')))
                     safe_write_cell(ws, row, 18, check.get('remarks', ''))
 
@@ -474,10 +475,9 @@ def generate_battery_excel_bytes(battery_pack_id: str) -> Optional[bytes]:
                     if result == '' or result == 'N/A':
                         result = check.get('module_y', '')
 
-                    timestamp_str = format_date_str(check.get('start_date'))
-
                     safe_write_cell(ws, row, 12, result, font=STANDARD_FONT)
-                    safe_write_cell(ws, row, 14, timestamp_str)
+                    safe_write_cell(ws, row, 14, format_date_str(check.get('start_date')))
+                    safe_write_cell(ws, row, 15, format_date_str(check.get('end_date')))
                     safe_write_cell(ws, row, 16, format_module_names(check.get('technician_name', '')))
                     safe_write_cell(ws, row, 18, check.get('remarks', ''))
                 else:
@@ -584,10 +584,9 @@ def generate_all_reports_excel_bytes() -> Optional[bytes]:
                         if pack_result == '' or pack_result == 'N/A':
                             pack_result = check.get('module_y', '')
 
-                        timestamp_str = format_date_str(check.get('start_date'))
-
                         safe_write_cell(ws, row, 12, pack_result, font=STANDARD_FONT)
-                        safe_write_cell(ws, row, 14, timestamp_str)
+                        safe_write_cell(ws, row, 14, format_date_str(check.get('start_date')))
+                        safe_write_cell(ws, row, 15, format_date_str(check.get('end_date')))
                         safe_write_cell(ws, row, 16, format_module_names(check.get('technician_name', '')))
                         safe_write_cell(ws, row, 18, check.get('remarks', ''))
 
@@ -599,10 +598,9 @@ def generate_all_reports_excel_bytes() -> Optional[bytes]:
                         if result == '' or result == 'N/A':
                             result = check.get('module_y', '')
 
-                        timestamp_str = format_date_str(check.get('start_date'))
-
                         safe_write_cell(ws, row, 12, result, font=STANDARD_FONT)
-                        safe_write_cell(ws, row, 14, timestamp_str)
+                        safe_write_cell(ws, row, 14, format_date_str(check.get('start_date')))
+                        safe_write_cell(ws, row, 15, format_date_str(check.get('end_date')))
                         safe_write_cell(ws, row, 16, format_module_names(check.get('technician_name', '')))
                         safe_write_cell(ws, row, 18, check.get('remarks', ''))
                     else:
