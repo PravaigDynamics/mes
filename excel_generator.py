@@ -175,28 +175,26 @@ def generate_battery_excel(battery_pack_id: str) -> Optional[Path]:
 
             elif process_type == "pack":
                 # Process 8: Pack Assembly
-                # Columns: L(12), N(14), O(15), P(16), R(18)
+                # N and O are merged in template → single Date cell; P and Q merged → single Name cell
+                # Write end_date if available, else start_date
                 for idx, check in enumerate(checks):
                     row = start_row + idx
 
-                    # For Pack Assembly, use Module X result as Pack QC Result (same as before)
                     pack_result = check.get('module_x', '')
                     if pack_result == '' or pack_result == 'N/A':
                         pack_result = check.get('module_y', '')
 
-                    start_date_str = format_date_str(check.get('start_date'))
-                    end_date_str   = format_date_str(check.get('end_date'))
+                    date_str = format_date_str(check.get('end_date') or check.get('start_date'))
 
                     safe_write_cell(ws, row, 12, pack_result, font=STANDARD_FONT)   # L: Pack QC Result
-                    safe_write_cell(ws, row, 14, start_date_str)                    # N: Start date
-                    safe_write_cell(ws, row, 15, end_date_str)                      # O: End date
-                    safe_write_cell(ws, row, 16, format_module_names(check.get('technician_name', '')))  # P: Name
+                    safe_write_cell(ws, row, 14, date_str)                          # N-O merged: Date
+                    safe_write_cell(ws, row, 16, format_module_names(check.get('technician_name', '')))  # P-Q merged: Name
                     safe_write_cell(ws, row, 18, check.get('remarks', ''))          # R: Remarks
 
             elif process_type == "dispatch":
                 # Process 9-10: Ready for Dispatch
+                # N-O merged, P-Q merged → single Date and Name cells
                 if len(checks) == 1:
-                    # Process 9: Overall pack visual inspection (single row at 62)
                     row = 62
                     check = checks[0]
 
@@ -204,13 +202,11 @@ def generate_battery_excel(battery_pack_id: str) -> Optional[Path]:
                     if result == '' or result == 'N/A':
                         result = check.get('module_y', '')
 
-                    start_date_str = format_date_str(check.get('start_date'))
-                    end_date_str   = format_date_str(check.get('end_date'))
+                    date_str = format_date_str(check.get('end_date') or check.get('start_date'))
 
                     safe_write_cell(ws, row, 12, result, font=STANDARD_FONT)        # L: Result
-                    safe_write_cell(ws, row, 14, start_date_str)                    # N: Start date
-                    safe_write_cell(ws, row, 15, end_date_str)                      # O: End date
-                    safe_write_cell(ws, row, 16, format_module_names(check.get('technician_name', '')))  # P: Name
+                    safe_write_cell(ws, row, 14, date_str)                          # N-O merged: Date
+                    safe_write_cell(ws, row, 16, format_module_names(check.get('technician_name', '')))  # P-Q merged: Name
                     safe_write_cell(ws, row, 18, check.get('remarks', ''))          # R: Remarks
                 else:
                     # Process 10: Packaging Instructions & PDIR Acceptance
@@ -332,8 +328,7 @@ def generate_master_excel() -> Optional[Path]:
                             pack_result = check.get('module_y', '')
 
                         safe_write_cell(ws, row, 12, pack_result, font=STANDARD_FONT)
-                        safe_write_cell(ws, row, 14, format_date_str(check.get('start_date')))
-                        safe_write_cell(ws, row, 15, format_date_str(check.get('end_date')))
+                        safe_write_cell(ws, row, 14, format_date_str(check.get('end_date') or check.get('start_date')))
                         safe_write_cell(ws, row, 16, format_module_names(check.get('technician_name', '')))
                         safe_write_cell(ws, row, 18, check.get('remarks', ''))
 
@@ -346,8 +341,7 @@ def generate_master_excel() -> Optional[Path]:
                             result = check.get('module_y', '')
 
                         safe_write_cell(ws, row, 12, result, font=STANDARD_FONT)
-                        safe_write_cell(ws, row, 14, format_date_str(check.get('start_date')))
-                        safe_write_cell(ws, row, 15, format_date_str(check.get('end_date')))
+                        safe_write_cell(ws, row, 14, format_date_str(check.get('end_date') or check.get('start_date')))
                         safe_write_cell(ws, row, 16, format_module_names(check.get('technician_name', '')))
                         safe_write_cell(ws, row, 18, check.get('remarks', ''))
                     else:
@@ -462,8 +456,7 @@ def generate_battery_excel_bytes(battery_pack_id: str) -> Optional[bytes]:
                         pack_result = check.get('module_y', '')
 
                     safe_write_cell(ws, row, 12, pack_result, font=STANDARD_FONT)
-                    safe_write_cell(ws, row, 14, format_date_str(check.get('start_date')))
-                    safe_write_cell(ws, row, 15, format_date_str(check.get('end_date')))
+                    safe_write_cell(ws, row, 14, format_date_str(check.get('end_date') or check.get('start_date')))
                     safe_write_cell(ws, row, 16, format_module_names(check.get('technician_name', '')))
                     safe_write_cell(ws, row, 18, check.get('remarks', ''))
 
@@ -476,8 +469,7 @@ def generate_battery_excel_bytes(battery_pack_id: str) -> Optional[bytes]:
                         result = check.get('module_y', '')
 
                     safe_write_cell(ws, row, 12, result, font=STANDARD_FONT)
-                    safe_write_cell(ws, row, 14, format_date_str(check.get('start_date')))
-                    safe_write_cell(ws, row, 15, format_date_str(check.get('end_date')))
+                    safe_write_cell(ws, row, 14, format_date_str(check.get('end_date') or check.get('start_date')))
                     safe_write_cell(ws, row, 16, format_module_names(check.get('technician_name', '')))
                     safe_write_cell(ws, row, 18, check.get('remarks', ''))
                 else:
@@ -585,8 +577,7 @@ def generate_all_reports_excel_bytes() -> Optional[bytes]:
                             pack_result = check.get('module_y', '')
 
                         safe_write_cell(ws, row, 12, pack_result, font=STANDARD_FONT)
-                        safe_write_cell(ws, row, 14, format_date_str(check.get('start_date')))
-                        safe_write_cell(ws, row, 15, format_date_str(check.get('end_date')))
+                        safe_write_cell(ws, row, 14, format_date_str(check.get('end_date') or check.get('start_date')))
                         safe_write_cell(ws, row, 16, format_module_names(check.get('technician_name', '')))
                         safe_write_cell(ws, row, 18, check.get('remarks', ''))
 
@@ -599,8 +590,7 @@ def generate_all_reports_excel_bytes() -> Optional[bytes]:
                             result = check.get('module_y', '')
 
                         safe_write_cell(ws, row, 12, result, font=STANDARD_FONT)
-                        safe_write_cell(ws, row, 14, format_date_str(check.get('start_date')))
-                        safe_write_cell(ws, row, 15, format_date_str(check.get('end_date')))
+                        safe_write_cell(ws, row, 14, format_date_str(check.get('end_date') or check.get('start_date')))
                         safe_write_cell(ws, row, 16, format_module_names(check.get('technician_name', '')))
                         safe_write_cell(ws, row, 18, check.get('remarks', ''))
                     else:
