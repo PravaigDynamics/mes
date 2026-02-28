@@ -41,11 +41,25 @@ PROCESS_ROW_MAPPING = {
 
 def format_module_names(combined: str) -> str:
     """Convert 'NameX, NameY' → 'Module X: NameX\nModule Y: NameY'.
-    If single name (no comma), return as-is."""
-    if combined and ',' in combined:
+    For single name, shows same name for both modules."""
+    if not combined or not combined.strip():
+        return ''
+    if ',' in combined:
         parts = combined.split(',', 1)
-        return f"Module X: {parts[0].strip()}\nModule Y: {parts[1].strip()}"
-    return combined.strip() if combined else ''
+        x = parts[0].strip()
+        y = parts[1].strip()
+    else:
+        x = y = combined.strip()
+    return f"Module X: {x}\nModule Y: {y}"
+
+
+def first_format_module_names(combined: str) -> str:
+    """Return only the Module X name (first part before comma, or the single name)."""
+    if not combined or not combined.strip():
+        return ''
+    if ',' in combined:
+        return combined.split(',', 1)[0].strip()
+    return combined.strip()
 
 
 def format_date_str(date_val) -> str:
