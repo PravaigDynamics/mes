@@ -1686,49 +1686,51 @@ def render_dashboard_tab():
                 # Get all QC checks for this pack from database (cached)
                 all_checks = cached_get_qc_checks(pack_id)
 
-                # Group checks by process
-                processes_completed = {}
+                # Group checks by process — track filled count and NOT OK flag
+                processes_data = {}  # {process_name: {'filled': int, 'has_not_ok': bool}}
                 for check in all_checks:
                     process_name = check['process_name']
-                    if process_name not in processes_completed:
-                        processes_completed[process_name] = []
+                    if process_name not in processes_data:
+                        processes_data[process_name] = {'filled': 0, 'has_not_ok': False}
 
-                    # Check if any result is NOT OK
                     module_x = check.get('module_x', '')
                     module_y = check.get('module_y', '')
 
                     if "NOT OK" in str(module_x) or "NOT OK" in str(module_y):
-                        processes_completed[process_name].append("NOT OK")
-                    elif "OK" in str(module_x) or "OK" in str(module_y):
-                        processes_completed[process_name].append("OK")
+                        processes_data[process_name]['has_not_ok'] = True
+                        processes_data[process_name]['filled'] += 1
+                    elif module_x or module_y:  # OK or N/A — any non-empty value
+                        processes_data[process_name]['filled'] += 1
 
                 # Map database processes to display stages
                 qc_ok_count = 0
-                processes_with_data = 0  # Count all processes with any data
                 has_deviations = False
+                has_processing = False
 
                 for stage in process_stages:
-                    stage_status = "0"
+                    expected = len(PROCESS_DEFINITIONS.get(stage, {}).get('qc_checks', []))
+                    pdata = processes_data.get(stage, {'filled': 0, 'has_not_ok': False})
 
-                    # Check if this stage has data in database
-                    if stage in processes_completed:
-                        checks = processes_completed[stage]
-                        if len(checks) > 0:
-                            processes_with_data += 1
-                            if "NOT OK" in checks:
-                                stage_status = "OK with Deviation"
-                                has_deviations = True
-                            else:
-                                stage_status = "QC OK"
-                                qc_ok_count += 1
+                    if pdata['filled'] == 0:
+                        stage_status = "0"
+                    elif pdata['has_not_ok']:
+                        stage_status = "QC NOT OK"
+                        has_deviations = True
+                    elif pdata['filled'] < expected:
+                        stage_status = "Processing"
+                        has_processing = True
+                    else:
+                        stage_status = "QC OK"
+                        qc_ok_count += 1
 
                     row_data[stage] = stage_status
 
-                # Determine final status based on processes completed
-                total_processes_done = processes_with_data
-                if total_processes_done >= 8 and not has_deviations:
+                # Determine final overall status
+                if has_deviations:
+                    row_data["Status"] = "QC Issues"
+                elif qc_ok_count >= 8:
                     row_data["Status"] = "Ready to dispatch"
-                elif total_processes_done > 0:
+                elif qc_ok_count > 0 or has_processing:
                     row_data["Status"] = "In Process"
                 else:
                     row_data["Status"] = "Not Started"
@@ -1746,11 +1748,15 @@ def render_dashboard_tab():
             # Style the dataframe
             def style_cell(val):
                 if val == "QC OK":
-                    return 'background-color: #c8e6c9; color: #2e7d32; font-weight: 500;'
-                elif val == "OK with Deviation":
-                    return 'background-color: #fff9c4; color: #f57c00; font-weight: 500;'
+                    return 'background-color: #c8e6c9; color: #2e7d32; font-weight: 600;'
+                elif val == "QC NOT OK":
+                    return 'background-color: #ffcdd2; color: #c62828; font-weight: 600;'
+                elif val == "Processing":
+                    return 'background-color: #fff3e0; color: #e65100; font-weight: 500;'
                 elif val == "Ready to dispatch":
                     return 'background-color: #2e7d32; color: white; font-weight: 700; text-align: center;'
+                elif val == "QC Issues":
+                    return 'background-color: #c62828; color: white; font-weight: 700; text-align: center;'
                 elif val == "In Process":
                     return 'background-color: #1976d2; color: white; font-weight: 600; text-align: center;'
                 elif val == "Not Started":
@@ -1780,14 +1786,14 @@ def render_dashboard_tab():
         completed_packs = sum(1 for row in tracker_data if row.get("Status") == "Ready to dispatch")
         in_process_packs = sum(1 for row in tracker_data if row.get("Status") == "In Process")
         not_started_packs = sum(1 for row in tracker_data if row.get("Status") == "Not Started")
-        rejected_packs = 0  # Could track packs with critical failures
+        rejected_packs = sum(1 for row in tracker_data if row.get("Status") == "QC Issues")
 
         with col_chart1:
             st.markdown("### Plan vs Actual in Packs")
 
             # Bar chart data
             bar_data = pd.DataFrame({
-                'Category': ['Target', 'Completed', 'In Process', 'Rejected'],
+                'Category': ['Target', 'Completed', 'In Process', 'QC Issues'],
                 'Count': [target_packs, completed_packs, in_process_packs, rejected_packs]
             })
 
@@ -1829,7 +1835,7 @@ def render_dashboard_tab():
 
             # Pie chart data
             pie_data = pd.DataFrame({
-                'Status': ['Target', 'Completed', 'In Process', 'Rejected'],
+                'Status': ['Target', 'Completed', 'In Process', 'QC Issues'],
                 'Percentage': [target_pct, completed_pct, in_process_pct, rejected_pct]
             })
 
