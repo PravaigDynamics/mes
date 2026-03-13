@@ -38,11 +38,87 @@ PROCESS_ROW_MAPPING = {
     "Ready for Dispatch": {"start_row": 62, "type": "dispatch"}
 }
 
+# Canonical check order per process — ensures correct Excel row offsets
+# regardless of the order checks were saved to DB (which is by created_at).
+QC_CHECKS_ORDER = {
+    "Cell Sorting": [
+        "1.1.1 Acceptable range Voltage : 3.58 to 3.6 V, IR : 11.5 to 12.5 mΩ",
+        "1.2.1 Jig setup on the flat surface",
+        "1.2.2 Visual & spacing inspection",
+        "1.2.3 No moisture, dust on the cell surface (no contaminations) - IP clean",
+    ],
+    "Module Assembly": [
+        "2.1.1 Proper fitment to the Base plate fixture and base plate orientation",
+        "2.1.2 Clinch/all rivets perpendicular to the plate & proper clinch",
+        "2.2.1 Volume consistency",
+        "2.2.2 Coverage in space/gap",
+        "2.2.3 Jig alignment correction",
+        "2.2.4 Cure and bond integrity - 2 hrs. adhesive curing after cell flip",
+        "2.3.1 Cell continuity check & visual check on cell fitment, Cell Height (72.6 mm) from base plate after dismantling fixture",
+        "2.3.2 Cleanliness inspection",
+        "2.4.1 Even fix of sidewall (PC sheets) on all four sides without gaps, proper dimension 72.5 mm × 239.4 mm",
+        "2.5.1 Placement as per drawing & wire routings (Thermistor - 7 nos / Voltage harness - 14 nos)",
+        "2.5.2 Secure adhesion & positioning with thermal adhesive",
+        "2.5.3 No insulation damage or routing faults (Visual + routing diagram comparison)",
+        "2.6.1 Busbar fitment as per drawings, Curing time 1 hr.",
+        "2.6.2 Busbar placement & defect absence",
+        "2.6.3 Adhesive coverage - Ensure full bond",
+        "2.6.4 Adhesion strength",
+        "2.6.5 Busbar and CPT sub-assembly dim (Ht 22.2 mm from the base)",
+    ],
+    "Encapsulation & Soldering - Phase 1": [
+        "3.1.1 No encapsulant leakage from sidewalls. Curing time 2 hr @ room temperature ~25°C",
+        "3.1.2 Dimensions: L 410.3 × W 239.4 mm",
+        "3.2.1 Busbar + CPT module assembly dim (Ht 78 mm from the base)",
+        "3.2.2 Soldering check & Voltage of module level (soft soldering of voltage taps on cell positive surface)",
+        "3.3.1 Proper Stripping, crimping & connector insertion for voltage tap and thermistor",
+    ],
+    "Wire Bonding": [
+        "4.1.1 The 4 bonds on each cell as per the drawing, module voltage & continuity (no continuity present)",
+    ],
+    "Encapsulation Phase II (100%)": [
+        "5.1.1 Equal distribution of encapsulant on the module (4 hrs. curing)",
+        "5.2.1 Dimensions: H 78.6 × L 410.3 × W 239.4 mm",
+    ],
+    "Module QC Checks": [
+        "6.1.1 Check for Spec: a) Weight 17 Kg  b) Module Voltage 50 V  c) Continuity: Not present  d) Module Height: 78.6 mm. Encapsulation & Final module visual checks, Floating Voltage & Isolation",
+    ],
+    "EOL Testing": [
+        "7.1.1 Check for Abnormal temp & voltages and cell imbalance, Isolation resistance (EOL: 300 amp charge and discharge)",
+    ],
+    "Pack Assembly": [
+        "8.1.1 Check whether PRV nut interfering",
+        "8.2.1 Check sealant applied uniformly & MSM gap maintained between two modules (11.2 mm)",
+        "8.3.1 Check sealant application and side foam in fire arrestor. Check width 168.4 mm & leak check",
+        "8.4.1 Torque check @ M4 Allen head",
+        "8.5.1 No gaps allowed / proper fitment check. PRV: M5 - 1 Nm",
+        "8.6.1 Terminal Placement verification with Jig",
+        "8.6.2 PCB Placement verification with Jig",
+        "8.6.3 Stud Placement and weld check with Jig",
+        "8.6.4 Mounting point alignment (Heatsink) with Jig",
+        "8.6.5 Pack dimensions (430 × 168.4 × 301.35 mm) check",
+        "8.6.6 Torque checks & torque marking",
+        "8.6.7 Flatness ≤ 0.5 mm",
+        "8.6.8 Sealing - PCB, Overall Pack Body & Terminals",
+        "8.6.9 Overall aesthetics/cleanliness of the pack",
+        "8.6.10 Top casing torque check and paint marking (M4 socket head)",
+        "8.6.11 Leak test / Pressure test (Passed/Failed)",
+        "8.6.12 Pack weight (CAD Wt.: 38 Kg)",
+        "8.7.1 Pack voltage: 100 V Nominal",
+        "8.7.2 Isolation resistance: Min in MΩ",
+        "8.7.3 Hard leakage to body - Shouldn't present",
+        "8.7.4 Voltage taps and thermistor readings with respect to PRAVAIG BMS (PCB communications: voltage + temperature)",
+        "8.7.5 Hard leakage to body - Shouldn't present (after bench drop test ~20°)",
+    ],
+    "Ready for Dispatch": [
+        "9.1 Overall pack visual inspection: No defects/no dents/no stains. HV terminals covered with Kapton, PCB covered, PRV placed and covered, product labels, warning labels, +ve & -ve terminal labels, manufacturing date and QC decals placed. (SOC % before dispatch ≤30%)",
+    ],
+}
+
 
 def _split_names(combined: str) -> list:
-    """Split a name string on ',' or '&', returning stripped non-empty parts."""
-    import re
-    parts = [p.strip() for p in re.split(r'[,&]', combined) if p.strip()]
+    """Split a name string on ',' returning stripped non-empty parts."""
+    parts = [p.strip() for p in combined.split(',') if p.strip()]
     return parts if parts else [combined.strip()]
 
 
@@ -159,7 +235,9 @@ def generate_battery_excel(battery_pack_id: str) -> Optional[Path]:
             if process_type == "standard":
                 # Processes 1-7: Cell sorting through EOL Testing
                 # Columns: L(12), M(13), N(14), O(15), P(16), Q(17), R(18)
-                for idx, check in enumerate(checks):
+                order = QC_CHECKS_ORDER.get(process_name, [])
+                for check in checks:
+                    idx = order.index(check['check_name']) if check['check_name'] in order else len(order)
                     row = start_row + idx
 
                     start_date_str = format_date_str(check.get('start_date'))
@@ -177,7 +255,9 @@ def generate_battery_excel(battery_pack_id: str) -> Optional[Path]:
                 # Process 8: Pack Assembly
                 # N and O are merged in template → single Date cell; P and Q merged → single Name cell
                 # Write end_date if available, else start_date
-                for idx, check in enumerate(checks):
+                order = QC_CHECKS_ORDER.get(process_name, [])
+                for check in checks:
+                    idx = order.index(check['check_name']) if check['check_name'] in order else len(order)
                     row = start_row + idx
 
                     pack_result = check.get('module_x', '')
@@ -215,7 +295,7 @@ def generate_battery_excel(battery_pack_id: str) -> Optional[Path]:
                         first_check = checks[0]
                         timestamp_str = format_date_str(first_check.get('start_date'))
 
-                        safe_write_cell(ws, 63, 6, first_format_module_names(check.get('qc_name', '')))  # F63: Inspector Name
+                        safe_write_cell(ws, 63, 6, first_format_module_names(first_check.get('qc_name', '')))  # F63: Inspector Name
                         safe_write_cell(ws, 63, 10, timestamp_str)                  # J63: Date
 
                     # Data rows starting at 64
@@ -306,7 +386,9 @@ def generate_master_excel() -> Optional[Path]:
 
                 # Same writing logic as generate_battery_excel (keeping code identical)
                 if process_type == "standard":
-                    for idx, check in enumerate(checks):
+                    order = QC_CHECKS_ORDER.get(process_name, [])
+                    for check in checks:
+                        idx = order.index(check['check_name']) if check['check_name'] in order else len(order)
                         row = start_row + idx
 
                         start_date_str = format_date_str(check.get('start_date'))
@@ -321,7 +403,9 @@ def generate_master_excel() -> Optional[Path]:
                         safe_write_cell(ws, row, 18, check.get('remarks', ''))
 
                 elif process_type == "pack":
-                    for idx, check in enumerate(checks):
+                    order = QC_CHECKS_ORDER.get(process_name, [])
+                    for check in checks:
+                        idx = order.index(check['check_name']) if check['check_name'] in order else len(order)
                         row = start_row + idx
                         pack_result = check.get('module_x', '')
                         if pack_result == '' or pack_result == 'N/A':
@@ -349,7 +433,7 @@ def generate_master_excel() -> Optional[Path]:
                             first_check = checks[0]
                             timestamp_str = format_date_str(first_check.get('start_date'))
 
-                            safe_write_cell(ws, 63, 6, first_format_module_names(check.get('qc_name', '')))
+                            safe_write_cell(ws, 63, 6, first_format_module_names(first_check.get('qc_name', '')))
                             safe_write_cell(ws, 63, 10, timestamp_str)
 
                         for idx, check in enumerate(checks):
@@ -434,7 +518,9 @@ def generate_battery_excel_bytes(battery_pack_id: str) -> Optional[bytes]:
             process_type = process_info["type"]
 
             if process_type == "standard":
-                for idx, check in enumerate(checks):
+                order = QC_CHECKS_ORDER.get(process_name, [])
+                for check in checks:
+                    idx = order.index(check['check_name']) if check['check_name'] in order else len(order)
                     row = start_row + idx
 
                     start_date_str = format_date_str(check.get('start_date'))
@@ -449,7 +535,9 @@ def generate_battery_excel_bytes(battery_pack_id: str) -> Optional[bytes]:
                     safe_write_cell(ws, row, 18, check.get('remarks', ''))
 
             elif process_type == "pack":
-                for idx, check in enumerate(checks):
+                order = QC_CHECKS_ORDER.get(process_name, [])
+                for check in checks:
+                    idx = order.index(check['check_name']) if check['check_name'] in order else len(order)
                     row = start_row + idx
                     pack_result = check.get('module_x', '')
                     if pack_result == '' or pack_result == 'N/A':
@@ -476,7 +564,7 @@ def generate_battery_excel_bytes(battery_pack_id: str) -> Optional[bytes]:
                     if checks:
                         first_check = checks[0]
                         timestamp_str = format_date_str(first_check.get('start_date'))
-                        safe_write_cell(ws, 63, 6, first_format_module_names(check.get('qc_name', '')))
+                        safe_write_cell(ws, 63, 6, first_format_module_names(first_check.get('qc_name', '')))
                         safe_write_cell(ws, 63, 10, timestamp_str)
 
                     for idx, check in enumerate(checks):
@@ -555,7 +643,9 @@ def generate_all_reports_excel_bytes() -> Optional[bytes]:
                 process_type = process_info["type"]
 
                 if process_type == "standard":
-                    for idx, check in enumerate(checks):
+                    order = QC_CHECKS_ORDER.get(process_name, [])
+                    for check in checks:
+                        idx = order.index(check['check_name']) if check['check_name'] in order else len(order)
                         row = start_row + idx
 
                         start_date_str = format_date_str(check.get('start_date'))
@@ -570,7 +660,9 @@ def generate_all_reports_excel_bytes() -> Optional[bytes]:
                         safe_write_cell(ws, row, 18, check.get('remarks', ''))
 
                 elif process_type == "pack":
-                    for idx, check in enumerate(checks):
+                    order = QC_CHECKS_ORDER.get(process_name, [])
+                    for check in checks:
+                        idx = order.index(check['check_name']) if check['check_name'] in order else len(order)
                         row = start_row + idx
                         pack_result = check.get('module_x', '')
                         if pack_result == '' or pack_result == 'N/A':
@@ -597,7 +689,7 @@ def generate_all_reports_excel_bytes() -> Optional[bytes]:
                         if checks:
                             first_check = checks[0]
                             timestamp_str = format_date_str(first_check.get('start_date'))
-                            safe_write_cell(ws, 63, 6, first_format_module_names(check.get('qc_name', '')))
+                            safe_write_cell(ws, 63, 6, first_format_module_names(first_check.get('qc_name', '')))
                             safe_write_cell(ws, 63, 10, timestamp_str)
 
                         for idx, check in enumerate(checks):

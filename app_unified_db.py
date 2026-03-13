@@ -1344,7 +1344,8 @@ def render_data_entry_tab():
                         'module_y': check.get('module_y', ''),
                         'technician_name': check.get('technician_name', ''),
                         'qc_name': check.get('qc_name', ''),
-                        'remarks': check.get('remarks', '')
+                        'remarks': check.get('remarks', ''),
+                        'end_date': check.get('end_date', '')
                     }
         except Exception as e:
             logger.error(f"Error loading existing data: {e}")
