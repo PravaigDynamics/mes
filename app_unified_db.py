@@ -41,6 +41,7 @@ from excel_generator import (
     generate_battery_excel_bytes, generate_all_reports_excel_bytes
 )
 from backup_manager import create_backup, list_backups, get_database_size
+from hioki_cell_sorting_module import render_hioki_cell_sorting_tab
 
 # Setup basic logging
 logging.basicConfig(
@@ -2226,11 +2227,12 @@ def main():
     st.caption("Manufacturing Execution System")
 
     # Navigation Tabs
-    tab1, tab2, tab3, tab4 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "Data Entry",
         "QR Generator",
         "Dashboard",
-        "Reports"
+        "Reports",
+        "Cell Sorting"
     ])
 
     with tab1:
@@ -2244,6 +2246,9 @@ def main():
 
     with tab4:
         render_reports_tab()
+
+    with tab5:
+        render_hioki_cell_sorting_tab()
 
 
 if __name__ == "__main__":
