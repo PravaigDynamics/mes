@@ -134,11 +134,31 @@ class _DB:
 # ---------------------------------------------------------------------------
 
 def _on_office_network(subnet):
+    """
+    Check if ANY network interface on this machine has an IP matching subnet.
+    Uses a UDP trick (no packet sent) to find the outbound interface IP,
+    then falls back to scanning all interfaces via socket.getaddrinfo.
+    This avoids the common Linux issue where gethostbyname() returns 127.0.0.1.
+    """
+    # Method 1: UDP connect trick — finds the IP used to reach the internet
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))   # no packet sent; just routes
+            ip = s.getsockname()[0]
+            if ip.startswith(subnet):
+                return True
+    except Exception:
+        pass
+
+    # Method 2: gethostbyname fallback
     try:
         ip = socket.gethostbyname(socket.gethostname())
-        return ip.startswith(subnet)
+        if ip.startswith(subnet):
+            return True
     except Exception:
-        return False
+        pass
+
+    return False
 
 
 def _receiver_running(port):
