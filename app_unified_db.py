@@ -41,7 +41,7 @@ from excel_generator import (
     generate_battery_excel_bytes, generate_all_reports_excel_bytes
 )
 from backup_manager import create_backup, list_backups, get_database_size
-from hioki_cell_sorting_module import render_hioki_cell_sorting_tab
+from hioki_streamlit_simple import render_hioki_cell_sorting_tab
 
 # Setup basic logging
 logging.basicConfig(
